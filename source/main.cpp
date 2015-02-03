@@ -210,60 +210,6 @@ private:
     float matrix[4][4];
 };
 
-class Vertex {
-public:
-    Vertex(Vector4 vec) :
-        position(vec),
-        x(position.x),
-        y(position.y),
-        z(position.z) {
-    }
-    Vertex(const Vertex& rhs) :
-                position(rhs.position),
-                x(position.x),
-                y(position.y),
-                z(position.z) {
-    }
-    float triangleAreaTimesTwo(Vertex b, Vertex c) {
-        float x1 = b.x - x;
-        float y1 = b.y - y;
-
-        float x2 = c.x - x;
-        float y2 = c.y - y;
-
-        return (x1 * y2 - x2 * y1);
-    }
-    static Vertex Random() {
-        Vector4 v((random() - 0.5f) * 2.0f, (random() - 0.5f) * 2.0f, 1.0f, 1.0f);
-        return Vertex(v);
-    }
-    Vertex transform(Matrix4& mat) {
-        return Vertex(mat * position);
-    }
-    Vertex perspectiveDivide() const {
-        return Vertex(Vector4(x/position.w, y/position.w, z/position.w, position.w));
-    }
-    Vertex& operator=(const Vertex& vec) {
-        position = vec.position;
-        x = position.x;
-        y = position.y;
-        z = position.z;
-        return *this;
-    }
-
-private:
-    Vector4 position;
-
-public:
-    float& x;
-    float& y;
-    float& z;
-};
-
-std::ostream& operator<<(std::ostream& out, const Vertex& rhs) {
-    out << "(" << (int)rhs.x << ", " << (int)rhs.y << ")";
-    return out;
-}
 
 class Color {
 public:
@@ -293,6 +239,66 @@ public:
     unsigned char g;
     unsigned char b;
     unsigned char a;
+};
+
+class Vertex {
+public:
+    Vertex(Vector4 position, Color color) :
+        position(position),
+        color(color) {
+    }
+    float triangleAreaTimesTwo(Vertex b, Vertex c) {
+        float x1 = b.position.x - position.x;
+        float y1 = b.position.y - position.y;
+
+        float x2 = c.position.x - position.x;
+        float y2 = c.position.y - position.y;
+
+        return (x1 * y2 - x2 * y1);
+    }
+    static Vertex Random() {
+        Vector4 v((random() - 0.5f) * 2.0f, (random() - 0.5f) * 2.0f, 1.0f, 1.0f);
+        return Vertex(v, Color::Random());
+    }
+    Vertex transform(Matrix4& mat) {
+        return Vertex(mat * position, color);
+    }
+    Vertex perspectiveDivide() const {
+        return Vertex(Vector4(position.x/position.w, position.y/position.w, position.z/position.w, position.w), color);
+    }
+
+    Vector4 position;
+    Color color;
+};
+
+std::ostream& operator<<(std::ostream& out, const Vertex& rhs) {
+    out << "(" << (int)rhs.position.x << ", " << (int)rhs.position.y << ")";
+    return out;
+}
+
+class Edge {
+public:
+    Edge(Vertex start, Vertex end) {
+        yStart = (int)ceil(start.position.y);
+        yEnd   = (int)ceil(end.position.y);
+
+        float yDist = end.position.y - start.position.y;
+        float xDist = end.position.x - start.position.x;
+
+        float yPrestep = yStart - start.position.y;
+
+        xStep = xDist/yDist;
+        x = start.position.x + yPrestep * xStep;
+    }
+
+    void Step() {
+        x += xStep;
+    }
+
+    float x;
+    float xStep;
+    int yStart;
+    int yEnd;
 };
 
 class Bitmap {
@@ -329,12 +335,12 @@ public:
 
 class Display {
 public:
-    Display(Bitmap& bitmap) : bitmap(bitmap) {
-        window.create(sf::VideoMode(bitmap.width, bitmap.height, 32), "Software Renderer");
+    Display(Bitmap& bitmap, float scale) : bitmap(bitmap) {
+        window.create(sf::VideoMode(bitmap.width * scale, bitmap.height * scale, 32), "Software Renderer");
 
         texture.create(bitmap.width, bitmap.height);
         sprite.setTexture(texture);
-        //sprite.scale(2.0f, 2.0f);
+        sprite.scale(scale, scale);
     }
     void draw() {
         sf::Event event;
@@ -428,29 +434,10 @@ private:
 
 class RenderContext : public Bitmap {
 public:
-    RenderContext(unsigned short width, unsigned short height) : Bitmap(width, height) {
-        scanBuffer = new unsigned int[height * 2];
+    RenderContext(unsigned short width, unsigned short height) :
+        Bitmap(width, height) {
     }
     ~RenderContext() {
-        delete[] scanBuffer;
-    }
-    void drawScanBuffer(unsigned int y, unsigned int xMin, unsigned int xMax) {
-        scanBuffer[y * 2]     = xMin;
-        scanBuffer[y * 2 + 1] = xMax;
-    }
-    void fillShape(unsigned int yMin, unsigned int yMax) {
-        if(yMin < 0 || yMax >= height) return;
-
-        Color randomColor= Color::Random();
-        for(unsigned int j = yMin; j < yMax; ++j) {
-            unsigned int xMin = scanBuffer[j * 2];
-            unsigned int xMax = scanBuffer[j * 2 + 1];
-
-            if(!xMin || !xMax) return;
-            for(unsigned int i = xMin; i < xMax; ++i) {
-                setPixel(i, j, randomColor);
-            }
-        }
     }
     void fillTriangle(Vertex v1, Vertex v2, Vertex v3) {
         Matrix4 screenspace;
@@ -460,66 +447,73 @@ public:
         Vertex midYVert = v2.transform(screenspace).perspectiveDivide();
         Vertex maxYVert = v3.transform(screenspace).perspectiveDivide();
 
-        if(maxYVert.y < midYVert.y) {
+        if(maxYVert.position.y < midYVert.position.y) {
             Vertex temp = maxYVert;
             maxYVert = midYVert;
             midYVert = temp;
         }
 
-        if(midYVert.y < minYVert.y) {
+        if(midYVert.position.y < minYVert.position.y) {
             Vertex temp = midYVert;
             midYVert = minYVert;
             minYVert = temp;
         }
 
-        if(maxYVert.y < midYVert.y) {
+        if(maxYVert.position.y < midYVert.position.y) {
             Vertex temp = maxYVert;
             maxYVert = midYVert;
             midYVert = temp;
         }
 
-        float area = minYVert.triangleAreaTimesTwo(maxYVert, midYVert);
-        unsigned short handedness = area >= 0 ? 1 : 0;
-
-        scanConvertTriangle(minYVert, midYVert, maxYVert, handedness);
-        fillShape((unsigned int)minYVert.y, (unsigned int)maxYVert.y);
-    }
-    void scanConvertTriangle(Vertex minYVert, Vertex midYVert, Vertex maxYVert, unsigned short handedness) {
-        scanConvertLine(minYVert, maxYVert, 0 + handedness);
-        scanConvertLine(minYVert, midYVert, 1 - handedness);
-        scanConvertLine(midYVert, maxYVert, 1 - handedness);
+        scanTriangle(minYVert, midYVert, maxYVert, minYVert.triangleAreaTimesTwo(maxYVert, midYVert) >= 0);
     }
 private:
-    void scanConvertLine(Vertex minYVert, Vertex maxYVert, unsigned short side) {
-        unsigned int yStart = (unsigned int)minYVert.y;
-        unsigned int yEnd   = (unsigned int)maxYVert.y;
-        unsigned int xStart = (unsigned int)minYVert.x;
-        unsigned int xEnd   = (unsigned int)maxYVert.x;
+    void scanTriangle(Vertex minYVert, Vertex midYVert, Vertex maxYVert, bool handedness) {
+        Edge topToBottom    (minYVert, maxYVert);
+        Edge topToMiddle    (minYVert, midYVert);
+        Edge middleToBottom (midYVert, maxYVert);
 
-        int yDist = yEnd - yStart;
-        int xDist = xEnd - xStart;
+        scanEdges(topToBottom, topToMiddle, handedness);
+        scanEdges(topToBottom, middleToBottom, handedness);
+    }
+    void scanEdges(Edge& a, Edge& b, bool handedness) {
+        Edge* left = &a;
+        Edge* right = &b;
 
-        if(yDist <= 0) return;
+        if(handedness) {
+            Edge* temp = left;
+            left = right;
+            right = temp;
+        }
 
-        float xStep = (float)xDist/(float)yDist;
-        float curX = (float)xStart;
+        int yStart = b.yStart;
+        int yEnd = b.yEnd;
 
-        for(unsigned int j = yStart; j < yEnd; ++j) {
-            scanBuffer[j * 2 + side] = (unsigned int)curX;
-            curX += xStep;
+        for (int j = yStart; j < yEnd; ++j) {
+            drawScanLine(*left, *right, j);
+            left->Step();
+            right->Step();
         }
     }
+    void drawScanLine(const Edge& left, const Edge& right, unsigned int j) {
+        int xMin = (int)ceil(left.x);
+        int xMax = (int)ceil(right.x);
 
-    unsigned int* scanBuffer;
+        for(int i = xMin; i < xMax; ++i) {
+            setPixel(i, j, Color::White());
+        }
+    }
 };
 
 int main() {
 
     srand(0);
 
-    RenderContext context(800, 600);
-    Display display(context);
-    Stars3D game(1024, 64.0f, 20.0f);
+    float scale = 2.0f;
+
+    RenderContext context(1080 / scale, 720 / scale);
+    Display display(context, scale);
+    Stars3D game(4096, 64.0f, 4.0f);
 
     sf::Clock clock;
     float counter = 0.0f;
@@ -527,9 +521,9 @@ int main() {
     Matrix4 projection;
     projection.perspective(60.0f, 800.0f/600.0f, 0.1f, 1000.0f);
 
-    Vertex v1 = Vertex(Vector4(-1.0f, -1.0f, 0.0f));
-    Vertex v2 = Vertex(Vector4(0.0f, 1.0f, 0.0f));
-    Vertex v3 = Vertex(Vector4(1.0f, -1.0f, 0.0f));
+    Vertex v1 = Vertex(Vector4(-1.0f, -1.0f, 0.0f), Color(0xFF0000FF));
+    Vertex v2 = Vertex(Vector4(0.0f, 1.0f, 0.0f), Color(0x00FF00FF));
+    Vertex v3 = Vertex(Vector4(1.0f, -1.0f, 0.0f), Color(0x0000FFFF));
 
     while(display.isOpen()) {
 
@@ -539,9 +533,9 @@ int main() {
         game.render(context, dt);
 
         Matrix4 transform;
-        transform.translate(0.0f, 0.0f, -5.0f);
-        transform.rotateX(counter * 100.0f);
-        transform.rotateY(counter * 75.0f);
+        transform.translate(0.0f, 0.0f, 5.0f);
+        transform.rotateX(counter * 50.0f);
+        transform.rotateY(counter * 50.0f);
         transform.rotateZ(counter * 50.0f);
         transform.scale(2.0f, 2.0f, 2.0f);
 
