@@ -3,6 +3,7 @@
 #include <iostream>
 #include <assert.h>
 #include <cstring>
+#include <time.h>
 #include <stdlib.h>
 #include <math.h>
 #define PI 3.14159265
@@ -24,7 +25,7 @@ float random() {
 
 class Vector4 {
 public:
-    Vector4(float x, float y, float z, float w = 1) {
+    Vector4(float x = 0, float y = 0, float z = 0, float w = 1) {
         this->x = x;
         this->y = y;
         this->z = z;
@@ -53,7 +54,7 @@ public:
         return Vector4(xx, yy, zz, 0);
     }
     Vector4 lerp(const Vector4& dest, float factor) {
-        return ((dest - *this) * factor) + *this;
+        return (*this) * (1.0f-factor) + dest * factor;
     }
     Vector4 operator+(const Vector4& v) const {
         return Vector4(x + v.x, y + v.y, z + v.z, w + v.w);
@@ -61,10 +62,10 @@ public:
     Vector4 operator-(const Vector4& v) const {
         return Vector4(x - v.x, y - v.y, z - v.z, w - v.w);
     }
-    Vector4 operator*(const int factor) const {
+    Vector4 operator*(const float factor) const {
         return Vector4(x * factor, y * factor, z * factor, w * factor);
     }
-    Vector4 operator/(const int factor) const {
+    Vector4 operator/(const float factor) const {
         assert(factor != 0);
         return Vector4(x / factor, y / factor, z / factor, w / factor);
     }
@@ -228,11 +229,23 @@ public:
     static Color Random() {
         return Color(random()*0xFF, random()*0xFF, random()*0xFF, 0xFF);
     }
+    static Color White() {
+        return Color(0xFFFFFFFF);
+    }
     static Color Grey() {
         return Color(0x151515FF);
     }
-    static Color White() {
-        return Color(0xFFFFFFFF);
+    static Color Red() {
+        return Color(0xFF0000FF);
+    }
+    static Color Green() {
+        return Color(0x00FF00FF);
+    }
+    static Color Blue() {
+        return Color(0x0000FFFF);
+    }
+    Vector4 asVector4() const {
+        return Vector4((float)r,(float)g,(float)b,(float)a);
     }
 
     unsigned char r;
@@ -243,7 +256,7 @@ public:
 
 class Vertex {
 public:
-    Vertex(Vector4 position, Color color) :
+    Vertex(Vector4 position, Vector4 color) :
         position(position),
         color(color) {
     }
@@ -258,7 +271,7 @@ public:
     }
     static Vertex Random() {
         Vector4 v((random() - 0.5f) * 2.0f, (random() - 0.5f) * 2.0f, 1.0f, 1.0f);
-        return Vertex(v, Color::Random());
+        return Vertex(v, Color::Random().asVector4());
     }
     Vertex transform(Matrix4& mat) {
         return Vertex(mat * position, color);
@@ -268,7 +281,7 @@ public:
     }
 
     Vector4 position;
-    Color color;
+    Vector4 color;
 };
 
 std::ostream& operator<<(std::ostream& out, const Vertex& rhs) {
@@ -276,9 +289,43 @@ std::ostream& operator<<(std::ostream& out, const Vertex& rhs) {
     return out;
 }
 
+class Gradients {
+public:
+    Gradients(Vertex minYVert, Vertex midYVert, Vertex maxYVert) {
+
+        color[0] = minYVert.color;
+        color[1] = midYVert.color;
+        color[2] = maxYVert.color;
+
+        float oneOverdX =
+            1.0f /
+            (((midYVert.position.x - maxYVert.position.x) *
+            (minYVert.position.y - maxYVert.position.y)) -
+            ((minYVert.position.x - maxYVert.position.x) *
+            (midYVert.position.y - maxYVert.position.y)));
+
+        float oneOverdY = -oneOverdX;
+
+        colorXStep =
+            ((color[1] - color[2]) *
+            (minYVert.position.y - maxYVert.position.y) -
+            (color[0] - color[2]) *
+            (midYVert.position.y - maxYVert.position.y)) * oneOverdX;
+
+        colorYStep =
+            ((color[1] - color[2]) *
+            (minYVert.position.x - maxYVert.position.x) -
+            (color[0] - color[2]) *
+            (midYVert.position.x - maxYVert.position.x)) * oneOverdY;
+    }
+    Vector4 color[3];
+    Vector4 colorXStep;
+    Vector4 colorYStep;
+};
+
 class Edge {
 public:
-    Edge(Vertex start, Vertex end) {
+    Edge(Gradients gradients, Vertex start, Vertex end, int startIndex) {
         yStart = (int)ceil(start.position.y);
         yEnd   = (int)ceil(end.position.y);
 
@@ -289,16 +336,24 @@ public:
 
         xStep = xDist/yDist;
         x = start.position.x + yPrestep * xStep;
+
+        float xPrestep = x - start.position.x;
+
+        color = gradients.color[startIndex] + gradients.colorYStep * yPrestep + gradients.colorXStep * xPrestep;
+        colorStep = gradients.colorYStep + gradients.colorXStep * xStep;
     }
 
     void Step() {
-        x += xStep;
+        x     = x + xStep;
+        color = color + colorStep;
     }
 
     float x;
     float xStep;
     int yStart;
     int yEnd;
+    Vector4 color;
+    Vector4 colorStep;
 };
 
 class Bitmap {
@@ -469,9 +524,10 @@ public:
     }
 private:
     void scanTriangle(Vertex minYVert, Vertex midYVert, Vertex maxYVert, bool handedness) {
-        Edge topToBottom    (minYVert, maxYVert);
-        Edge topToMiddle    (minYVert, midYVert);
-        Edge middleToBottom (midYVert, maxYVert);
+        Gradients gradiends (minYVert, midYVert, maxYVert);
+        Edge topToBottom    (gradiends, minYVert, maxYVert, 0);
+        Edge topToMiddle    (gradiends, minYVert, midYVert, 0);
+        Edge middleToBottom (gradiends, midYVert, maxYVert, 1);
 
         scanEdges(topToBottom, topToMiddle, handedness);
         scanEdges(topToBottom, middleToBottom, handedness);
@@ -499,15 +555,23 @@ private:
         int xMin = (int)ceil(left.x);
         int xMax = (int)ceil(right.x);
 
+        Vector4 minColor = left.color;
+        Vector4 maxColor = right.color;
+
+        float lerpAmt = 0.0f;
+        float leftStep = 1.0f/(xMax-xMin);
+
         for(int i = xMin; i < xMax; ++i) {
-            setPixel(i, j, Color::White());
+            Vector4 color = minColor.lerp(maxColor, lerpAmt);
+            lerpAmt += leftStep;
+            setPixel(i, j, Color(color.x, color.y, color.z, color.w));
         }
     }
 };
 
 int main() {
 
-    srand(0);
+    srand(time(nullptr));
 
     float scale = 2.0f;
 
@@ -519,11 +583,11 @@ int main() {
     float counter = 0.0f;
 
     Matrix4 projection;
-    projection.perspective(60.0f, 800.0f/600.0f, 0.1f, 1000.0f);
+    projection.perspective(45.0f, 800.0f/600.0f, 0.1f, 1000.0f);
 
-    Vertex v1 = Vertex(Vector4(-1.0f, -1.0f, 0.0f), Color(0xFF0000FF));
-    Vertex v2 = Vertex(Vector4(0.0f, 1.0f, 0.0f), Color(0x00FF00FF));
-    Vertex v3 = Vertex(Vector4(1.0f, -1.0f, 0.0f), Color(0x0000FFFF));
+    Vertex v1 = Vertex(Vector4(-1.0f, -1.0f, 0.0f), Color::Red().asVector4());
+    Vertex v2 = Vertex(Vector4(0.0f, 1.0f, 0.0f),   Color::Green().asVector4());
+    Vertex v3 = Vertex(Vector4(1.0f, -1.0f, 0.0f),  Color::Blue().asVector4());
 
     while(display.isOpen()) {
 
@@ -533,10 +597,8 @@ int main() {
         game.render(context, dt);
 
         Matrix4 transform;
-        transform.translate(0.0f, 0.0f, 5.0f);
-        transform.rotateX(counter * 50.0f);
-        transform.rotateY(counter * 50.0f);
-        transform.rotateZ(counter * 50.0f);
+        transform.translate(0.0f, 0.0f, -5.0f);
+        transform.rotateY(counter * 80.0f);
         transform.scale(2.0f, 2.0f, 2.0f);
 
         Matrix4 mvp = projection * transform;
