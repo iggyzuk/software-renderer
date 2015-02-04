@@ -293,9 +293,13 @@ class Gradients {
 public:
     Gradients(Vertex minYVert, Vertex midYVert, Vertex maxYVert) {
 
-        texcoords[0] = minYVert.texcoords;
-        texcoords[1] = midYVert.texcoords;
-        texcoords[2] = maxYVert.texcoords;
+        oneOverZ[0] = 1.0f / minYVert.position.w;
+        oneOverZ[1] = 1.0f / midYVert.position.w;
+        oneOverZ[2] = 1.0f / maxYVert.position.w;
+
+        texcoords[0] = minYVert.texcoords * oneOverZ[0];
+        texcoords[1] = midYVert.texcoords * oneOverZ[1];
+        texcoords[2] = maxYVert.texcoords * oneOverZ[2];
 
         float oneOverdX =
             1.0f /
@@ -303,24 +307,36 @@ public:
             (minYVert.position.y - maxYVert.position.y)) -
             ((minYVert.position.x - maxYVert.position.x) *
             (midYVert.position.y - maxYVert.position.y)));
-
         float oneOverdY = -oneOverdX;
 
-        texcoordsXStep =
-            ((texcoords[1] - texcoords[2]) *
-            (minYVert.position.y - maxYVert.position.y) -
-            (texcoords[0] - texcoords[2]) *
-            (midYVert.position.y - maxYVert.position.y)) * oneOverdX;
+        texcoordsXStep = calcStepX(texcoords, minYVert, midYVert, maxYVert, oneOverdX);
+        texcoordsYStep = calcStepY(texcoords, minYVert, midYVert, maxYVert, oneOverdY);
 
-        texcoordsYStep =
-            ((texcoords[1] - texcoords[2]) *
-            (minYVert.position.x - maxYVert.position.x) -
-            (texcoords[0] - texcoords[2]) *
-            (midYVert.position.x - maxYVert.position.x)) * oneOverdY;
+        oneOverZXStep = calcStepX(oneOverZ, minYVert, midYVert, maxYVert, oneOverdX);
+        oneOverZYStep = calcStepY(oneOverZ, minYVert, midYVert, maxYVert, oneOverdY);
     }
+    template<typename T>
+    T calcStepX(T values[], Vertex minYVert, Vertex midYVert, Vertex maxYVert, float oneOverdX) {
+        return ((values[1] - values[2]) *
+               (minYVert.position.y - maxYVert.position.y) -
+               (values[0] - values[2]) *
+               (midYVert.position.y - maxYVert.position.y)) * oneOverdX;
+    }
+    template<typename T>
+    T calcStepY(T values[], Vertex minYVert, Vertex midYVert, Vertex maxYVert, float oneOverdY) {
+        return ((values[1] - values[2]) *
+               (minYVert.position.x - maxYVert.position.x) -
+               (values[0] - values[2]) *
+               (midYVert.position.x - maxYVert.position.x)) * oneOverdY;
+    }
+
     Vector4 texcoords[3];
     Vector4 texcoordsXStep;
     Vector4 texcoordsYStep;
+
+    float oneOverZ[3];
+    float oneOverZXStep;
+    float oneOverZYStep;
 };
 
 class Edge {
@@ -341,19 +357,27 @@ public:
 
         texcoords = gradients.texcoords[startIndex] + gradients.texcoordsYStep * yPrestep + gradients.texcoordsXStep * xPrestep;
         texcoordsStep = gradients.texcoordsYStep + gradients.texcoordsXStep * xStep;
+
+        oneOverZ = gradients.oneOverZ[startIndex];
+        oneOverZStep = gradients.oneOverZYStep + gradients.oneOverZXStep * xStep;
     }
 
     void Step() {
         x     = x + xStep;
         texcoords = texcoords + texcoordsStep;
+        oneOverZ = oneOverZ + oneOverZStep;
     }
 
     float x;
     float xStep;
     int yStart;
     int yEnd;
+
     Vector4 texcoords;
     Vector4 texcoordsStep;
+
+    float oneOverZ;
+    float oneOverZStep;
 };
 
 class Bitmap {
@@ -570,19 +594,24 @@ private:
         Vector4 minTexcoords = left.texcoords;
         Vector4 maxTexcoords = right.texcoords;
 
+        Vector4 minZ = Vector4(0.0f, 0.0f, left.oneOverZ, 0.0f);
+        Vector4 maxZ = Vector4(0.0f, 0.0f, right.oneOverZ, 0.0f);
+
         float lerpAmt = 0.0f;
         float leftStep = 1.0f/(xMax-xMin);
 
         for(int i = xMin; i < xMax; ++i) {
             Vector4 texcoords = minTexcoords.lerp(maxTexcoords, lerpAmt);
-            lerpAmt += leftStep;
+            Vector4 oneOverZ = minZ.lerp(maxZ, lerpAmt);
 
-            int srcX = (int)(texcoords.x * texture.width);
-            int srcY = (int)(texcoords.y * texture.height);
+            float z = 1.0f / oneOverZ.z;
+
+            int srcX = (int)((texcoords.x * z) * texture.width);
+            int srcY = (int)((texcoords.y * z) * texture.height);
 
             copyPixel(i, j, srcX, srcY, texture);
 
-            //setPixel(i, j, Color(texcoords.x, texcoords.y, texcoords.z, texcoords.w));
+            lerpAmt += leftStep;
         }
     }
 };
@@ -628,7 +657,9 @@ int main() {
 
         Matrix4 transform;
         transform.translate(0.0f, 0.0f, -5.0f);
+        transform.rotateZ(counter * 80.0f);
         transform.rotateY(counter * 80.0f);
+        transform.rotateZ(counter * 80.0f);
         transform.scale(2.0f, 2.0f, 2.0f);
 
         Matrix4 mvp = projection * transform;
