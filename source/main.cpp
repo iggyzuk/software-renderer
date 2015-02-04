@@ -256,9 +256,9 @@ public:
 
 class Vertex {
 public:
-    Vertex(Vector4 position, Vector4 color) :
+    Vertex(Vector4 position, Vector4 texcoords) :
         position(position),
-        color(color) {
+        texcoords(texcoords) {
     }
     float triangleAreaTimesTwo(Vertex b, Vertex c) {
         float x1 = b.position.x - position.x;
@@ -274,14 +274,14 @@ public:
         return Vertex(v, Color::Random().asVector4());
     }
     Vertex transform(Matrix4& mat) {
-        return Vertex(mat * position, color);
+        return Vertex(mat * position, texcoords);
     }
     Vertex perspectiveDivide() const {
-        return Vertex(Vector4(position.x/position.w, position.y/position.w, position.z/position.w, position.w), color);
+        return Vertex(Vector4(position.x/position.w, position.y/position.w, position.z/position.w, position.w), texcoords);
     }
 
     Vector4 position;
-    Vector4 color;
+    Vector4 texcoords;
 };
 
 std::ostream& operator<<(std::ostream& out, const Vertex& rhs) {
@@ -293,9 +293,9 @@ class Gradients {
 public:
     Gradients(Vertex minYVert, Vertex midYVert, Vertex maxYVert) {
 
-        color[0] = minYVert.color;
-        color[1] = midYVert.color;
-        color[2] = maxYVert.color;
+        texcoords[0] = minYVert.texcoords;
+        texcoords[1] = midYVert.texcoords;
+        texcoords[2] = maxYVert.texcoords;
 
         float oneOverdX =
             1.0f /
@@ -306,21 +306,21 @@ public:
 
         float oneOverdY = -oneOverdX;
 
-        colorXStep =
-            ((color[1] - color[2]) *
+        texcoordsXStep =
+            ((texcoords[1] - texcoords[2]) *
             (minYVert.position.y - maxYVert.position.y) -
-            (color[0] - color[2]) *
+            (texcoords[0] - texcoords[2]) *
             (midYVert.position.y - maxYVert.position.y)) * oneOverdX;
 
-        colorYStep =
-            ((color[1] - color[2]) *
+        texcoordsYStep =
+            ((texcoords[1] - texcoords[2]) *
             (minYVert.position.x - maxYVert.position.x) -
-            (color[0] - color[2]) *
+            (texcoords[0] - texcoords[2]) *
             (midYVert.position.x - maxYVert.position.x)) * oneOverdY;
     }
-    Vector4 color[3];
-    Vector4 colorXStep;
-    Vector4 colorYStep;
+    Vector4 texcoords[3];
+    Vector4 texcoordsXStep;
+    Vector4 texcoordsYStep;
 };
 
 class Edge {
@@ -339,21 +339,21 @@ public:
 
         float xPrestep = x - start.position.x;
 
-        color = gradients.color[startIndex] + gradients.colorYStep * yPrestep + gradients.colorXStep * xPrestep;
-        colorStep = gradients.colorYStep + gradients.colorXStep * xStep;
+        texcoords = gradients.texcoords[startIndex] + gradients.texcoordsYStep * yPrestep + gradients.texcoordsXStep * xPrestep;
+        texcoordsStep = gradients.texcoordsYStep + gradients.texcoordsXStep * xStep;
     }
 
     void Step() {
         x     = x + xStep;
-        color = color + colorStep;
+        texcoords = texcoords + texcoordsStep;
     }
 
     float x;
     float xStep;
     int yStart;
     int yEnd;
-    Vector4 color;
-    Vector4 colorStep;
+    Vector4 texcoords;
+    Vector4 texcoordsStep;
 };
 
 class Bitmap {
@@ -381,6 +381,18 @@ public:
         pixels[index + 1] = color.g; // G
         pixels[index + 2] = color.b; // B
         pixels[index + 3] = color.a; // A
+    }
+    void copyPixel(unsigned int destX, unsigned int destY, unsigned int srcX, unsigned int srcY, const Bitmap& src) {
+        int destIndex = (destX + destY * width) * 4;
+        int srcIndex = (srcX + srcY * src.width) * 4;
+
+        if(destIndex < 0 || destIndex >= width * height * 4) return;
+        if(srcIndex < 0 || srcIndex >= src.width * src.height * 4) return;
+
+        pixels[destIndex]     = src.pixels[srcIndex    ]; // R
+        pixels[destIndex + 1] = src.pixels[srcIndex + 1]; // G
+        pixels[destIndex + 2] = src.pixels[srcIndex + 2]; // B
+        pixels[destIndex + 3] = src.pixels[srcIndex + 3]; // A
     }
 
     unsigned short width;
@@ -494,7 +506,7 @@ public:
     }
     ~RenderContext() {
     }
-    void fillTriangle(Vertex v1, Vertex v2, Vertex v3) {
+    void fillTriangle(Vertex v1, Vertex v2, Vertex v3, const Bitmap& texture) {
         Matrix4 screenspace;
         screenspace.viewport(width, height);
 
@@ -520,19 +532,19 @@ public:
             midYVert = temp;
         }
 
-        scanTriangle(minYVert, midYVert, maxYVert, minYVert.triangleAreaTimesTwo(maxYVert, midYVert) >= 0);
+        scanTriangle(minYVert, midYVert, maxYVert, minYVert.triangleAreaTimesTwo(maxYVert, midYVert) >= 0, texture);
     }
 private:
-    void scanTriangle(Vertex minYVert, Vertex midYVert, Vertex maxYVert, bool handedness) {
+    void scanTriangle(Vertex minYVert, Vertex midYVert, Vertex maxYVert, bool handedness, const Bitmap& texture) {
         Gradients gradiends (minYVert, midYVert, maxYVert);
         Edge topToBottom    (gradiends, minYVert, maxYVert, 0);
         Edge topToMiddle    (gradiends, minYVert, midYVert, 0);
         Edge middleToBottom (gradiends, midYVert, maxYVert, 1);
 
-        scanEdges(topToBottom, topToMiddle, handedness);
-        scanEdges(topToBottom, middleToBottom, handedness);
+        scanEdges(topToBottom, topToMiddle, handedness, texture);
+        scanEdges(topToBottom, middleToBottom, handedness, texture);
     }
-    void scanEdges(Edge& a, Edge& b, bool handedness) {
+    void scanEdges(Edge& a, Edge& b, bool handedness, const Bitmap& texture) {
         Edge* left = &a;
         Edge* right = &b;
 
@@ -546,25 +558,31 @@ private:
         int yEnd = b.yEnd;
 
         for (int j = yStart; j < yEnd; ++j) {
-            drawScanLine(*left, *right, j);
+            drawScanLine(*left, *right, j, texture);
             left->Step();
             right->Step();
         }
     }
-    void drawScanLine(const Edge& left, const Edge& right, unsigned int j) {
+    void drawScanLine(const Edge& left, const Edge& right, unsigned int j, const Bitmap& texture) {
         int xMin = (int)ceil(left.x);
         int xMax = (int)ceil(right.x);
 
-        Vector4 minColor = left.color;
-        Vector4 maxColor = right.color;
+        Vector4 minTexcoords = left.texcoords;
+        Vector4 maxTexcoords = right.texcoords;
 
         float lerpAmt = 0.0f;
         float leftStep = 1.0f/(xMax-xMin);
 
         for(int i = xMin; i < xMax; ++i) {
-            Vector4 color = minColor.lerp(maxColor, lerpAmt);
+            Vector4 texcoords = minTexcoords.lerp(maxTexcoords, lerpAmt);
             lerpAmt += leftStep;
-            setPixel(i, j, Color(color.x, color.y, color.z, color.w));
+
+            int srcX = (int)(texcoords.x * texture.width);
+            int srcY = (int)(texcoords.y * texture.height);
+
+            copyPixel(i, j, srcX, srcY, texture);
+
+            //setPixel(i, j, Color(texcoords.x, texcoords.y, texcoords.z, texcoords.w));
         }
     }
 };
@@ -585,9 +603,21 @@ int main() {
     Matrix4 projection;
     projection.perspective(45.0f, 800.0f/600.0f, 0.1f, 1000.0f);
 
-    Vertex v1 = Vertex(Vector4(-1.0f, -1.0f, 0.0f), Color::Red().asVector4());
-    Vertex v2 = Vertex(Vector4(0.0f, 1.0f, 0.0f),   Color::Green().asVector4());
-    Vertex v3 = Vertex(Vector4(1.0f, -1.0f, 0.0f),  Color::Blue().asVector4());
+    Vertex v1 = Vertex(Vector4(-1.0f, -1.0f, 0.0f), Vector4(0.0f, 0.0f));
+    Vertex v2 = Vertex(Vector4(0.0f, 1.0f, 0.0f),   Vector4(0.5f, 1.0f));
+    Vertex v3 = Vertex(Vector4(1.0f, -1.0f, 0.0f),  Vector4(1.0f, 0.0f));
+
+    Bitmap texture(16, 16);
+    for(int j = 0; j < texture.height; ++j) {
+        for(int i = 0; i < texture.width; ++i) {
+            bool isLight = (i + j) % 2 == 0;
+            if(isLight) {
+                texture.setPixel(i, j, Color::White());
+            } else {
+                texture.setPixel(i, j, Color::Red());
+            }
+        }
+    }
 
     while(display.isOpen()) {
 
@@ -606,7 +636,8 @@ int main() {
         context.fillTriangle(
                 v1.transform(mvp),
                 v2.transform(mvp),
-                v3.transform(mvp));
+                v3.transform(mvp),
+                texture);
 
         display.draw();
     }
