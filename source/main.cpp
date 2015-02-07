@@ -10,6 +10,7 @@
 #include <math.h>
 #include <vector>
 #include <map>
+#include <utility>
 #define PI 3.14159265
 
 template <typename T>
@@ -97,45 +98,26 @@ public:
     }
     void viewport(unsigned short width, unsigned short height) {
         identity();
-        unsigned short halfWidth = width / 2;
-        unsigned short halfHeight = height / 2;
+
+        float halfWidth = (float)width / 2.0f;
+        float halfHeight = (float)height / 2.0f;
+
         matrix[0][0] = halfWidth;
         matrix[1][1] = -halfHeight;
-        matrix[3][0] = halfWidth;
-        matrix[3][1] = halfHeight;
+        matrix[3][0] = halfWidth - 0.5f;
+        matrix[3][1] = halfHeight - 0.5f;
     }
-    void perspective(float fov, float aspect, float znear, float zfar) {
-        float xymax = znear * tan((float)(fov * PI / 180.0f));
-        float ymin = -xymax;
-        float xmin = -xymax;
+    void perspective(float fov, float aspectRatio, float zNear, float zFar) {
+        identity();
 
-        float width = xymax - xmin;
-        float height = xymax - ymin;
+        float tanHalfFOV = (float)tan((fov / 2) * (PI / 180));
+        float zRange = zNear - zFar;
 
-        float depth = zfar - znear;
-        float q = -(zfar + znear) / depth;
-        float qn = -2 * (zfar * znear) / depth;
-
-        float w = 2 * znear / width;
-        w = w / aspect;
-        float h = 2 * znear / height;
-
-        matrix[0][0] = w;
-        matrix[0][1] = 0.0f;
-        matrix[0][2] = 0.0f;
-        matrix[0][3] = 0.0f;
-        matrix[1][0] = 0.0f;
-        matrix[1][1] = h;
-        matrix[1][2] = 0.0f;
-        matrix[1][3] = 0.0f;
-        matrix[2][0] = 0.0f;
-        matrix[2][1] = 0.0f;
-        matrix[2][2] = q;
-        matrix[2][3] = -1.0f;
-        matrix[3][0] = 0.0f;
-        matrix[3][1] = 0.0f;
-        matrix[3][2] = qn;
-        matrix[3][3] = 0.0f;
+        matrix[0][0] = 1.0f / (tanHalfFOV * aspectRatio);
+        matrix[1][1] = 1.0f / tanHalfFOV;
+        matrix[2][2] = (-zNear -zFar)/zRange;
+        matrix[3][2] = 2.0f * zFar * zNear / zRange;
+        matrix[2][3] = 1.0f;
     }
     Matrix4 operator*(const Matrix4& mat) {
         Matrix4 m;
@@ -264,15 +246,6 @@ public:
         position(position),
         texcoords(texcoords) {
     }
-    float triangleAreaTimesTwo(Vertex b, Vertex c) {
-        float x1 = b.position.x - position.x;
-        float y1 = b.position.y - position.y;
-
-        float x2 = c.position.x - position.x;
-        float y2 = c.position.y - position.y;
-
-        return (x1 * y2 - x2 * y1);
-    }
     static Vertex Random() {
         Vector4 v((random() - 0.5f) * 2.0f, (random() - 0.5f) * 2.0f, 1.0f, 1.0f);
         return Vertex(v, Color::Random().asVector4());
@@ -282,6 +255,31 @@ public:
     }
     Vertex perspectiveDivide() const {
         return Vertex(Vector4(position.x/position.w, position.y/position.w, position.z/position.w, position.w), texcoords);
+    }
+    float triangleAreaTimesTwo(Vertex b, Vertex c) {
+        float x1 = b.position.x - position.x;
+        float y1 = b.position.y - position.y;
+
+        float x2 = c.position.x - position.x;
+        float y2 = c.position.y - position.y;
+
+        return (x1 * y2 - x2 * y1);
+    }
+    Vertex lerp(const Vertex& other, float lerpAmt) {
+        return Vertex( position.lerp(other.position, lerpAmt),
+                       texcoords.lerp(other.texcoords, lerpAmt) );
+    }
+    bool isInsideViewFrustum() {
+        return fabs(position.x) <= fabs(position.w) &&
+               fabs(position.y) <= fabs(position.w) &&
+               fabs(position.z) <= fabs(position.w);
+    }
+    float get(int index) {
+        if(index == 0) return position.x;
+        if(index == 1) return position.y;
+        if(index == 2) return position.z;
+        if(index == 3) return position.w;
+        return 0;
     }
 
     Vector4 position;
@@ -296,6 +294,10 @@ std::ostream& operator<<(std::ostream& out, const Vertex& rhs) {
 class Gradients {
 public:
     Gradients(Vertex minYVert, Vertex midYVert, Vertex maxYVert) {
+
+        depth[0] = minYVert.position.z;
+        depth[1] = midYVert.position.z;
+        depth[2] = maxYVert.position.z;
 
         oneOverZ[0] = 1.0f / minYVert.position.w;
         oneOverZ[1] = 1.0f / midYVert.position.w;
@@ -318,6 +320,9 @@ public:
 
         oneOverZXStep = calcStepX(oneOverZ, minYVert, midYVert, maxYVert, oneOverdX);
         oneOverZYStep = calcStepY(oneOverZ, minYVert, midYVert, maxYVert, oneOverdY);
+
+        depthXStep = calcStepX(depth, minYVert, midYVert, maxYVert, oneOverdX);
+        depthYStep = calcStepY(depth, minYVert, midYVert, maxYVert, oneOverdY);
     }
     template<typename T>
     inline T calcStepX(T values[], Vertex minYVert, Vertex midYVert, Vertex maxYVert, float oneOverdX) {
@@ -341,35 +346,41 @@ public:
     float oneOverZ[3];
     float oneOverZXStep;
     float oneOverZYStep;
+
+    float depth[3];
+    float depthXStep;
+    float depthYStep;
 };
 
 class Edge {
 public:
     Edge(Gradients gradients, Vertex start, Vertex end, int startIndex) {
-        yStart = (int)ceil(start.position.y);
-        yEnd   = (int)ceil(end.position.y);
+        yStart = (int)ceilf(start.position.y);
+        yEnd   = (int)ceilf(end.position.y);
 
         float yDist = end.position.y - start.position.y;
         float xDist = end.position.x - start.position.x;
 
         float yPrestep = yStart - start.position.y;
-
-        xStep = xDist/yDist;
+        xStep = xDist / yDist;
         x = start.position.x + yPrestep * xStep;
-
         float xPrestep = x - start.position.x;
 
-        texcoords = gradients.texcoords[startIndex] + gradients.texcoordsYStep * yPrestep + gradients.texcoordsXStep * xPrestep;
+        texcoords = gradients.texcoords[startIndex] + (gradients.texcoordsXStep * xPrestep) + (gradients.texcoordsYStep * yPrestep);
         texcoordsStep = gradients.texcoordsYStep + gradients.texcoordsXStep * xStep;
 
-        oneOverZ = gradients.oneOverZ[startIndex];
+        oneOverZ = gradients.oneOverZ[startIndex] + gradients.oneOverZXStep * xPrestep + gradients.oneOverZYStep * yPrestep;
         oneOverZStep = gradients.oneOverZYStep + gradients.oneOverZXStep * xStep;
+
+        depth = gradients.depth[startIndex] + gradients.depthXStep * xPrestep + gradients.depthYStep * yPrestep;
+        depthStep = gradients.depthYStep + gradients.depthXStep * xStep;
     }
 
     void Step() {
-        x     = x + xStep;
+        x         = x + xStep;
         texcoords = texcoords + texcoordsStep;
-        oneOverZ = oneOverZ + oneOverZStep;
+        oneOverZ  = oneOverZ + oneOverZStep;
+        depth     = depth + depthStep;
     }
 
     float x;
@@ -382,6 +393,9 @@ public:
 
     float oneOverZ;
     float oneOverZStep;
+
+    float depth;
+    float depthStep;
 };
 
 class Bitmap {
@@ -467,7 +481,7 @@ private:
     Bitmap&          bitmap;
 };
 
-class Stars3D {
+class StarsField {
 
     class Star {
     public:
@@ -483,7 +497,7 @@ class Stars3D {
     };
 
 public:
-    Stars3D(int numStars, float spread, float speed) {
+    StarsField(int numStars, float spread, float speed) {
         this->spread = spread;
         this->speed = speed;
 
@@ -492,7 +506,7 @@ public:
             initStar(i);
         }
     }
-    ~Stars3D() {
+    ~StarsField() {
         for(unsigned int i = 0; i < stars.size(); ++i) {
             delete stars[i];
         }
@@ -510,8 +524,6 @@ public:
 
         unsigned int halfWidth = target.width / 2;
         unsigned int halfHeight = target.height / 2;
-
-        target.clear(Color::Grey());
 
         for(auto& star : stars) {
             star->z -= speed * dt;
@@ -586,7 +598,8 @@ public:
                 else if(tokens[0] == "vt") {
                     model.texCoords.push_back( Vector4(StringToNumber<float>(tokens[1]),
                                                        1.0f - StringToNumber<float>(tokens[2]),
-                                                       0.0f) );
+                                                       0.0f,
+                                                       1.0f) );
                 }
                 else if(tokens[0] == "vn") {
                     model.normals.push_back( Vector4(StringToNumber<float>(tokens[1]),
@@ -683,7 +696,7 @@ public:
 
         indices.resize(model.indices.size());
         for(unsigned int j = 0; j < model.indices.size(); ++j) {
-            indices[j] = model.indices[j]; //.vertexIndex;
+            indices[j] = model.indices[j];
         }
     }
     std::vector<Vertex> vertices;
@@ -694,13 +707,93 @@ class RenderContext : public Bitmap {
 public:
     RenderContext(unsigned short width, unsigned short height) :
         Bitmap(width, height) {
+        zBuffer = new float[width * height];
+        clearDepthBuffer();
+    }
+    ~RenderContext() {
+        delete[] zBuffer;
+    }
+    void clearDepthBuffer() {
+        unsigned int size = width * height;
+        for(unsigned int i = 0; i < size; ++i) {
+            zBuffer[i] = 1.0f;
+        }
     }
     void drawMesh(Mesh mesh, Matrix4 transform, const Bitmap& texture) {
         for(unsigned int i = 0; i < mesh.indices.size(); i += 3) {
-            fillTriangle( mesh.vertices[mesh.indices[i    ]].transform(transform),
+            drawTriangle( mesh.vertices[mesh.indices[i    ]].transform(transform),
                           mesh.vertices[mesh.indices[i + 1]].transform(transform),
                           mesh.vertices[mesh.indices[i + 2]].transform(transform),
                           texture );
+        }
+    }
+    void drawTriangle(Vertex v1, Vertex v2, Vertex v3, const Bitmap& texture) {
+
+        bool v1Inside = v1.isInsideViewFrustum();
+        bool v2Inside = v2.isInsideViewFrustum();
+        bool v3Inside = v3.isInsideViewFrustum();
+
+        if(v1Inside && v2Inside && v3Inside) {
+            fillTriangle(v1, v2, v3, texture);
+            return;
+        }
+
+        if(!v1Inside && !v2Inside && !v3Inside) return;
+
+        std::vector<Vertex> vertices;
+        std::vector<Vertex> auxiliaryList;
+
+        vertices.push_back(v1);
+        vertices.push_back(v2);
+        vertices.push_back(v3);
+
+        if(clipPolygonAxis(vertices, auxiliaryList, 0) &&
+           clipPolygonAxis(vertices, auxiliaryList, 1) &&
+           clipPolygonAxis(vertices, auxiliaryList, 2)) {
+
+            Vertex initialVertex = vertices[0];
+            for(unsigned int i = 1; i < vertices.size() - 1; ++i) {
+                fillTriangle(initialVertex, vertices[i], vertices[i + 1], texture);
+            }
+        }
+    }
+private:
+    bool clipPolygonAxis(std::vector<Vertex>& vertices, std::vector<Vertex>& auxiliaryList, int componentIndex) {
+        clipPolygonComponent(vertices, componentIndex, 1.0f, auxiliaryList);
+        vertices.clear();
+
+        if(auxiliaryList.empty()) return false;
+
+        clipPolygonComponent(auxiliaryList, componentIndex, -1.0f, vertices);
+        auxiliaryList.clear();
+
+        return !vertices.empty();
+
+    }
+    void clipPolygonComponent(std::vector<Vertex>& vertices, int componentIndex, float componentFactor, std::vector<Vertex>& result) {
+        Vertex previousVertex = vertices[vertices.size() - 1];
+        float previousComponent = previousVertex.get(componentIndex) * componentFactor;
+        bool previousInside = previousComponent <= previousVertex.position.w;
+
+        for(auto& currentVertex : vertices) {
+            float currentComponent = currentVertex.get(componentIndex) * componentFactor;
+            bool currentInside = currentComponent <= currentVertex.position.w;
+
+            if(currentInside ^ previousInside) {
+                float lerpAmt = (previousVertex.position.w - previousComponent) /
+                                ((previousVertex.position.w - previousComponent) -
+                                (currentVertex.position.w - currentComponent));
+
+                result.push_back(previousVertex.lerp(currentVertex, lerpAmt));
+            }
+
+            if(currentInside) {
+                result.push_back(currentVertex);
+            }
+
+            previousVertex = currentVertex;
+            previousComponent = currentComponent;
+            previousInside = currentInside;
         }
     }
     void fillTriangle(Vertex v1, Vertex v2, Vertex v3, const Bitmap& texture) {
@@ -711,7 +804,7 @@ public:
         Vertex midYVert = v2.transform(screenspace).perspectiveDivide();
         Vertex maxYVert = v3.transform(screenspace).perspectiveDivide();
 
-        if(minYVert.triangleAreaTimesTwo(maxYVert, midYVert) < 0)
+        if(minYVert.triangleAreaTimesTwo(maxYVert, midYVert) >= 0)
             return;
 
         if(maxYVert.position.y < midYVert.position.y) {
@@ -734,7 +827,6 @@ public:
 
         scanTriangle(minYVert, midYVert, maxYVert, minYVert.triangleAreaTimesTwo(maxYVert, midYVert) >= 0, texture);
     }
-private:
     void scanTriangle(Vertex minYVert, Vertex midYVert, Vertex maxYVert, bool handedness, const Bitmap& texture) {
         Gradients gradiends (minYVert, midYVert, maxYVert);
         Edge topToBottom    (gradiends, minYVert, maxYVert, 0);
@@ -754,42 +846,87 @@ private:
             right = temp;
         }
 
-        int yStart = b.yStart;
-        int yEnd = b.yEnd;
+        unsigned int yStart = b.yStart;
+        unsigned int yEnd = b.yEnd;
 
-        for (int j = yStart; j < yEnd; ++j) {
+        for (unsigned int j = yStart; j < yEnd; ++j) {
             drawScanLine(*left, *right, j, texture);
             left->Step();
             right->Step();
         }
     }
     void drawScanLine(const Edge& left, const Edge& right, unsigned int j, const Bitmap& texture) {
-        int xMin = (int)ceil(left.x);
-        int xMax = (int)ceil(right.x);
+        int xMin = (int)ceilf(left.x);
+        int xMax = (int)ceilf(right.x);
 
-        Vector4 minTexcoords = left.texcoords;
-        Vector4 maxTexcoords = right.texcoords;
+        float xPrestep = xMin - left.x;
+        float xDist = right.x - left.x;
+        float texCoordXXStep = (right.texcoords.x - left.texcoords.x) / xDist;
+        float texCoordYXStep = (right.texcoords.y - left.texcoords.y) / xDist;
+        float oneOverZXStep = (right.oneOverZ - left.oneOverZ) / xDist;
+        float depthXStep = (right.depth - left.depth)/xDist;
 
-        Vector4 minZ = Vector4(0.0f, 0.0f, left.oneOverZ, 0.0f);
-        Vector4 maxZ = Vector4(0.0f, 0.0f, right.oneOverZ, 0.0f);
-
-        float lerpAmt = 0.0f;
-        float leftStep = 1.0f/(xMax-xMin);
+        float texCoordX = left.texcoords.x + texCoordXXStep * xPrestep;
+        float texCoordY = left.texcoords.y + texCoordYXStep * xPrestep;
+        float oneOverZ = left.oneOverZ + oneOverZXStep * xPrestep;
+        float depth = left.depth + depthXStep * xPrestep;
 
         for(int i = xMin; i < xMax; ++i) {
-            Vector4 texcoords = minTexcoords.lerp(maxTexcoords, lerpAmt);
-            Vector4 oneOverZ = minZ.lerp(maxZ, lerpAmt);
 
-            float z = 1.0f / oneOverZ.z;
+            int index = i + j * width;
 
-            int srcX = (int)((texcoords.x * z) * texture.width);
-            int srcY = (int)((texcoords.y * z) * texture.height);
+            if(depth < zBuffer[index]) {
+                zBuffer[index] = depth;
 
-            copyPixel(i, j, srcX, srcY, texture);
+                float z = 1.0f / oneOverZ;
+                int srcX = (int)((texCoordX * z) * (float)(texture.width - 1) + 0.5f);
+                int srcY = (int)((texCoordY * z) * (float)(texture.height - 1) + 0.5f);
 
-            lerpAmt += leftStep;
+                copyPixel(i, j, srcX, srcY, texture);
+            }
+
+            texCoordX += texCoordXXStep;
+            texCoordY += texCoordYXStep;
+            oneOverZ += oneOverZXStep;
+            depth += depthXStep;
         }
     }
+
+private:
+    float* zBuffer;
+};
+
+class Animation {
+public:
+    Animation(int totalFrames, float frameTimeInSeconds) {
+        this->currentFrame = 0;
+        this->totalFrames = totalFrames;
+        this->frameTimeInSeconds = frameTimeInSeconds;
+        this->timer = 0.0f;
+    }
+    void addFrame(Mesh&& mesh) {
+        frames.push_back(mesh);
+    }
+    Mesh& frame() {
+        return frames[currentFrame];
+    }
+    void animate(const float& dt) {
+        timer += dt;
+        while(timer > frameTimeInSeconds) {
+            currentFrame++;
+            if(currentFrame >= totalFrames) {
+                currentFrame = 0;
+            }
+            timer -= frameTimeInSeconds;
+        }
+    }
+
+private:
+    std::vector<Mesh> frames;
+    unsigned int currentFrame;
+    unsigned int totalFrames;
+    float frameTimeInSeconds;
+    float timer;
 };
 
 int main() {
@@ -800,15 +937,15 @@ int main() {
 
     RenderContext context(1080 / scale, 720 / scale);
     Display display(context, scale);
-    Stars3D game(4096, 64.0f, 4.0f);
+    StarsField starfield(4096, 64.0f, 4.0f);
 
     sf::Clock clock;
     float counter = 0.0f;
 
     Matrix4 projection;
-    projection.perspective(60.0f, 800.0f/600.0f, 0.1f, 1000.0f);
+    projection.perspective(90.0f, 800.0f/600.0f, 0.1f, 1000.0f);
 
-    Bitmap texture(16, 16);
+    Bitmap texture(128, 128);
     for(int j = 0; j < texture.height; ++j) {
         for(int i = 0; i < texture.width; ++i) {
             bool isLight = (i + j) % 2 == 0;
@@ -820,26 +957,46 @@ int main() {
         }
     }
 
-    Bitmap texture2 = Bitmap::LoadFromFile("assets/turtle.png");
+    Bitmap turtleTex = Bitmap::LoadFromFile("assets/turtle_pink.png");
+    Bitmap marioTex = Bitmap::LoadFromFile("assets/mario.png");
 
-    Mesh mesh("assets/turtle.obj");
+    Animation anim(8, 0.08f);
+    anim.addFrame(Mesh("assets/animation/turtle1.obj"));
+    anim.addFrame(Mesh("assets/animation/turtle2.obj"));
+    anim.addFrame(Mesh("assets/animation/turtle3.obj"));
+    anim.addFrame(Mesh("assets/animation/turtle4.obj"));
+    anim.addFrame(Mesh("assets/animation/turtle5.obj"));
+    anim.addFrame(Mesh("assets/animation/turtle6.obj"));
+    anim.addFrame(Mesh("assets/animation/turtle7.obj"));
+    anim.addFrame(Mesh("assets/animation/turtle8.obj"));
+
+    Mesh portal("assets/portal.obj");
+    Mesh mario("assets/mario.obj");
+    Mesh box("assets/box.obj");
+    Mesh turtle("assets/turtle.obj");
 
     while(display.isOpen()) {
 
         float dt = clock.restart().asSeconds();
         counter += dt;
 
-        game.render(context, dt);
+        context.clear(Color::Grey());
+        context.clearDepthBuffer();
 
-        Matrix4 transform;
-        transform.translate(0.0f, 0.0f, -3.0f);
-        //transform.rotateX(counter * 25.0f);
-        transform.rotateY(counter * 32.0f);
-        //transform.rotateZ(counter * 44.0f);
+        starfield.render(context, dt);
 
-        Matrix4 mvp = projection * transform;
+        Matrix4 transform1;
+        transform1.translate(cos(counter * 0.5f) * 5.0f, 0.0f, 5.0f);
+        transform1.rotateY(counter * 32.0f);
 
-        context.drawMesh(mesh, mvp, texture2);
+        Matrix4 transform2;
+        transform2.translate(0.0f, 0.0f, 4.0f);
+        transform2.rotateY(counter * 33.0f);
+        transform2.scale(2.0f, 2.0f, 2.0f);
+
+        anim.animate(dt);
+        context.drawMesh(anim.frame(), projection * transform2, turtleTex);
+        context.drawMesh(portal, projection * transform1, texture);
 
         display.draw();
     }
