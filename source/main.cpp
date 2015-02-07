@@ -1,6 +1,8 @@
 #include <SFML\Graphics.hpp>
 #include <SFML\Window.hpp>
 #include <iostream>
+#include <fstream>
+#include <sstream>
 #include <assert.h>
 #include <cstring>
 #include <time.h>
@@ -25,7 +27,7 @@ float random() {
 
 class Vector4 {
 public:
-    Vector4(float x = 0, float y = 0, float z = 0, float w = 1) {
+    Vector4(float x = 0.0f, float y = 0.0f, float z = 0.0f, float w = 1.0f) {
         this->x = x;
         this->y = y;
         this->z = z;
@@ -69,10 +71,10 @@ public:
         assert(factor != 0);
         return Vector4(x / factor, y / factor, z / factor, w / factor);
     }
-    float x;
-    float y;
-    float z;
-    float w;
+    float x {0.0f};
+    float y {0.0f};
+    float z {0.0f};
+    float w {0.0f};
 };
 std::ostream& operator<<(std::ostream& out, const Vector4& rhs) {
     out << "(" << rhs.x << ", " << rhs.y << ", " << rhs.z << ")";
@@ -285,7 +287,7 @@ public:
 };
 
 std::ostream& operator<<(std::ostream& out, const Vertex& rhs) {
-    out << "(" << (int)rhs.position.x << ", " << (int)rhs.position.y << ")";
+    out << "(" << (int)rhs.position.x << ", " << (int)rhs.position.y << ", " << (int)rhs.position.z << ")";
     return out;
 }
 
@@ -316,14 +318,14 @@ public:
         oneOverZYStep = calcStepY(oneOverZ, minYVert, midYVert, maxYVert, oneOverdY);
     }
     template<typename T>
-    T calcStepX(T values[], Vertex minYVert, Vertex midYVert, Vertex maxYVert, float oneOverdX) {
+    inline T calcStepX(T values[], Vertex minYVert, Vertex midYVert, Vertex maxYVert, float oneOverdX) {
         return ((values[1] - values[2]) *
                (minYVert.position.y - maxYVert.position.y) -
                (values[0] - values[2]) *
                (midYVert.position.y - maxYVert.position.y)) * oneOverdX;
     }
     template<typename T>
-    T calcStepY(T values[], Vertex minYVert, Vertex midYVert, Vertex maxYVert, float oneOverdY) {
+    inline T calcStepY(T values[], Vertex minYVert, Vertex midYVert, Vertex maxYVert, float oneOverdY) {
         return ((values[1] - values[2]) *
                (minYVert.position.x - maxYVert.position.x) -
                (values[0] - values[2]) *
@@ -410,6 +412,7 @@ public:
         int destIndex = (destX + destY * width) * 4;
         int srcIndex = (srcX + srcY * src.width) * 4;
 
+        if(destX < 0 || destX >= width || srcX < 0 || srcX >= width) return;
         if(destIndex < 0 || destIndex >= width * height * 4) return;
         if(srcIndex < 0 || srcIndex >= src.width * src.height * 4) return;
 
@@ -523,12 +526,116 @@ private:
     std::vector<Star*> stars;
 };
 
+template<typename T>
+T StringToNumber(std::string string) {
+    std::istringstream buffer(string);
+    T value; buffer >> value;
+    return value;
+}
+
+class OBJLoader {
+public:
+
+    struct Index {
+        unsigned int vertexIndex;
+        unsigned int texCoordIndex;
+        unsigned int normalIndex;
+    };
+
+    struct IndexedModel {
+        std::vector<Vector4> vertices;
+        std::vector<Vector4> texCoords;
+        std::vector<Vector4> normals;
+        std::vector<Vector4> tangents;
+        std::vector<Index>   indices;
+    };
+
+    static IndexedModel Load(std::string filename) {
+
+        IndexedModel model;
+
+        std::ifstream file(filename, std::ios::binary | std::ios::in);
+        if(file.is_open()){
+            for(std::string line; std::getline(file,line);){
+                std::vector<std::string> tokens = split(line, ' ');
+                assert(tokens.size() > 0);
+
+                if(tokens[0] == "#") continue;
+                if(tokens[0] == "v") {
+                    model.vertices.push_back(Vector4(StringToNumber<float>(tokens[1]), StringToNumber<float>(tokens[2]), StringToNumber<float>(tokens[3])));
+                }
+                else if(tokens[0] == "vt") {
+                    model.texCoords.push_back(Vector4(StringToNumber<float>(tokens[1]), StringToNumber<float>(tokens[2]), 0.0f));
+                }
+                else if(tokens[0] == "vn") {
+                    model.normals.push_back(Vector4(StringToNumber<float>(tokens[1]), StringToNumber<float>(tokens[2]), StringToNumber<float>(tokens[3]), 0.0f));
+                }
+                else if(tokens[0] == "f") {
+                    for(unsigned int i = 1; i < tokens.size(); ++i) {
+                        std::vector<std::string> indexTokens = split(tokens[i], '/');
+
+                        Index index;
+                        index.vertexIndex   = StringToNumber<unsigned int>(indexTokens[0]) - 1;
+                        index.texCoordIndex = StringToNumber<unsigned int>(indexTokens[1]) - 1;
+                        index.normalIndex   = StringToNumber<unsigned int>(indexTokens[2]) - 1;
+
+                        model.indices.push_back(index);
+                    }
+                }
+            }
+        }
+        file.close();
+        return model;
+    }
+
+private:
+
+    static std::vector<std::string>& split(const std::string& s, char delim, std::vector<std::string>& elems) {
+        std::stringstream ss(s);
+        std::string item;
+        while (std::getline(ss, item, delim)) {
+            elems.push_back(item);
+        }
+        return elems;
+    }
+    static std::vector<std::string> split(const std::string& s, char delim) {
+        std::vector<std::string> elems;
+        split(s, delim, elems);
+        return elems;
+    }
+};
+
+class Mesh {
+public:
+    Mesh(std::string filename) {
+        OBJLoader::IndexedModel model = OBJLoader::Load(filename);
+
+        for(unsigned int i = 0; i < model.vertices.size(); ++i) {
+            vertices.push_back(Vertex( model.vertices[i],
+                                       model.texCoords[i]) );
+        }
+
+        indices.resize(model.indices.size());
+        for(unsigned int j = 0; j < model.indices.size(); ++j) {
+            indices[j] = model.indices[j].vertexIndex;
+        }
+    }
+    std::vector<Vertex> vertices;
+    std::vector<unsigned int> indices;
+};
+
 class RenderContext : public Bitmap {
 public:
     RenderContext(unsigned short width, unsigned short height) :
         Bitmap(width, height) {
     }
-    ~RenderContext() {
+    void drawMesh(Mesh mesh, Matrix4 transform, const Bitmap& texture) {
+        for(unsigned int i = 0; i < mesh.indices.size(); i += 3) {
+            fillTriangle( mesh.vertices[mesh.indices[i    ]].transform(transform),
+                          mesh.vertices[mesh.indices[i + 1]].transform(transform),
+                          mesh.vertices[mesh.indices[i + 2]].transform(transform),
+                          texture );
+        }
     }
     void fillTriangle(Vertex v1, Vertex v2, Vertex v3, const Bitmap& texture) {
         Matrix4 screenspace;
@@ -630,23 +737,21 @@ int main() {
     float counter = 0.0f;
 
     Matrix4 projection;
-    projection.perspective(45.0f, 800.0f/600.0f, 0.1f, 1000.0f);
-
-    Vertex v1 = Vertex(Vector4(-1.0f, -1.0f, 0.0f), Vector4(0.0f, 0.0f));
-    Vertex v2 = Vertex(Vector4(0.0f, 1.0f, 0.0f),   Vector4(0.5f, 1.0f));
-    Vertex v3 = Vertex(Vector4(1.0f, -1.0f, 0.0f),  Vector4(1.0f, 0.0f));
+    projection.perspective(60.0f, 800.0f/600.0f, 0.1f, 1000.0f);
 
     Bitmap texture(16, 16);
     for(int j = 0; j < texture.height; ++j) {
         for(int i = 0; i < texture.width; ++i) {
             bool isLight = (i + j) % 2 == 0;
             if(isLight) {
-                texture.setPixel(i, j, Color::White());
+                texture.setPixel(i, j, Color(0xFEDB00FF));
             } else {
-                texture.setPixel(i, j, Color::Red());
+                texture.setPixel(i, j, Color(0xFF9536FF));
             }
         }
     }
+
+    Mesh mesh("assets/turtle.obj");
 
     while(display.isOpen()) {
 
@@ -656,19 +761,14 @@ int main() {
         game.render(context, dt);
 
         Matrix4 transform;
-        transform.translate(0.0f, 0.0f, -5.0f);
-        transform.rotateZ(counter * 80.0f);
-        transform.rotateY(counter * 80.0f);
-        transform.rotateZ(counter * 80.0f);
-        transform.scale(2.0f, 2.0f, 2.0f);
+        transform.translate(0.0f, 0.0f, -3.0f);
+        transform.rotateX(counter * 25.0f);
+        transform.rotateY(counter * 32.0f);
+        transform.rotateZ(counter * 44.0f);
 
         Matrix4 mvp = projection * transform;
 
-        context.fillTriangle(
-                v1.transform(mvp),
-                v2.transform(mvp),
-                v3.transform(mvp),
-                texture);
+        context.drawMesh(mesh, mvp, texture);
 
         display.draw();
     }
