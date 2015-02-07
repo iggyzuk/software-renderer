@@ -8,6 +8,8 @@
 #include <time.h>
 #include <stdlib.h>
 #include <math.h>
+#include <vector>
+#include <map>
 #define PI 3.14159265
 
 template <typename T>
@@ -421,6 +423,14 @@ public:
         pixels[destIndex + 2] = src.pixels[srcIndex + 2]; // B
         pixels[destIndex + 3] = src.pixels[srcIndex + 3]; // A
     }
+    static Bitmap LoadFromFile(const std::string& filename) {
+        sf::Texture texture;
+        texture.loadFromFile(filename);
+        Bitmap bitmap(texture.getSize().x, texture.getSize().y);
+        memcpy(bitmap.pixels, texture.copyToImage().getPixelsPtr(), texture.getMaximumSize());
+        //bitmap.pixels = (unsigned char*)texture.copyToImage().getPixelsPtr();
+        return bitmap;
+    }
 
     unsigned short width;
     unsigned short height;
@@ -536,23 +546,30 @@ T StringToNumber(std::string string) {
 class OBJLoader {
 public:
 
-    struct Index {
+    struct OBJIndex {
         unsigned int vertexIndex;
         unsigned int texCoordIndex;
         unsigned int normalIndex;
     };
 
-    struct IndexedModel {
-        std::vector<Vector4> vertices;
-        std::vector<Vector4> texCoords;
-        std::vector<Vector4> normals;
-        std::vector<Vector4> tangents;
-        std::vector<Index>   indices;
+    struct OBJModel {
+        std::vector<Vector4>  vertices;
+        std::vector<Vector4>  texCoords;
+        std::vector<Vector4>  normals;
+        std::vector<OBJIndex> indices;
     };
 
-    static IndexedModel Load(std::string filename) {
+    struct IndexedModel {
+        std::vector<Vector4>      vertices;
+        std::vector<Vector4>      texCoords;
+        std::vector<Vector4>      normals;
+        std::vector<Vector4>      tangents;
+        std::vector<unsigned int> indices;
+    };
 
-        IndexedModel model;
+    static OBJModel Load(std::string filename) {
+
+        OBJModel model;
 
         std::ifstream file(filename, std::ios::binary | std::ios::in);
         if(file.is_open()){
@@ -562,19 +579,26 @@ public:
 
                 if(tokens[0] == "#") continue;
                 if(tokens[0] == "v") {
-                    model.vertices.push_back(Vector4(StringToNumber<float>(tokens[1]), StringToNumber<float>(tokens[2]), StringToNumber<float>(tokens[3])));
+                    model.vertices.push_back( Vector4(StringToNumber<float>(tokens[1]),
+                                                      StringToNumber<float>(tokens[2]),
+                                                      StringToNumber<float>(tokens[3])) );
                 }
                 else if(tokens[0] == "vt") {
-                    model.texCoords.push_back(Vector4(StringToNumber<float>(tokens[1]), StringToNumber<float>(tokens[2]), 0.0f));
+                    model.texCoords.push_back( Vector4(StringToNumber<float>(tokens[1]),
+                                                       1.0f - StringToNumber<float>(tokens[2]),
+                                                       0.0f) );
                 }
                 else if(tokens[0] == "vn") {
-                    model.normals.push_back(Vector4(StringToNumber<float>(tokens[1]), StringToNumber<float>(tokens[2]), StringToNumber<float>(tokens[3]), 0.0f));
+                    model.normals.push_back( Vector4(StringToNumber<float>(tokens[1]),
+                                                     StringToNumber<float>(tokens[2]),
+                                                     StringToNumber<float>(tokens[3]),
+                                                     0.0f) );
                 }
                 else if(tokens[0] == "f") {
                     for(unsigned int i = 1; i < tokens.size(); ++i) {
                         std::vector<std::string> indexTokens = split(tokens[i], '/');
 
-                        Index index;
+                        OBJIndex index;
                         index.vertexIndex   = StringToNumber<unsigned int>(indexTokens[0]) - 1;
                         index.texCoordIndex = StringToNumber<unsigned int>(indexTokens[1]) - 1;
                         index.normalIndex   = StringToNumber<unsigned int>(indexTokens[2]) - 1;
@@ -585,6 +609,48 @@ public:
             }
         }
         file.close();
+        return model;
+    }
+
+    static IndexedModel ToIndexedModel(const OBJModel& obj) {
+
+        IndexedModel model;
+        std::map<unsigned int, unsigned int> indexMap; // OBJModel.indices -> IndexModel.indices
+        unsigned int currentVertexIndex = 0;
+
+        for(unsigned int i = 0; i < obj.indices.size(); ++i) {
+            OBJIndex currentIndex = obj.indices[i];
+
+            Vector4 currentPosition = obj.vertices[currentIndex.vertexIndex];
+            Vector4 currentTexCoord = obj.texCoords[currentIndex.texCoordIndex];
+            Vector4 currentNormal   = obj.normals[currentIndex.normalIndex];
+
+            // Check for duplicates O(n^2)
+            int previousVertexIndex = -1;
+            for(unsigned int j = 0; j < i; ++j) {
+                OBJIndex oldIndex = obj.indices[j];
+
+                if(currentIndex.vertexIndex == oldIndex.vertexIndex &&
+                   currentIndex.texCoordIndex == oldIndex.texCoordIndex &&
+                   currentIndex.normalIndex == oldIndex.normalIndex) {
+                    previousVertexIndex = j;
+                    break;
+                }
+            }
+
+            if(previousVertexIndex == -1) {
+                indexMap[i] = currentVertexIndex;
+
+                model.vertices.push_back(currentPosition);
+                model.texCoords.push_back(currentTexCoord);
+                model.normals.push_back(currentNormal);
+                model.indices.push_back(currentVertexIndex);
+                currentVertexIndex++;
+            }
+            else {
+                model.indices.push_back(indexMap[(unsigned int)previousVertexIndex]);
+            }
+        }
         return model;
     }
 
@@ -608,7 +674,7 @@ private:
 class Mesh {
 public:
     Mesh(std::string filename) {
-        OBJLoader::IndexedModel model = OBJLoader::Load(filename);
+        OBJLoader::IndexedModel model = OBJLoader::ToIndexedModel(OBJLoader::Load(filename));
 
         for(unsigned int i = 0; i < model.vertices.size(); ++i) {
             vertices.push_back(Vertex( model.vertices[i],
@@ -617,7 +683,7 @@ public:
 
         indices.resize(model.indices.size());
         for(unsigned int j = 0; j < model.indices.size(); ++j) {
-            indices[j] = model.indices[j].vertexIndex;
+            indices[j] = model.indices[j]; //.vertexIndex;
         }
     }
     std::vector<Vertex> vertices;
@@ -644,6 +710,9 @@ public:
         Vertex minYVert = v1.transform(screenspace).perspectiveDivide();
         Vertex midYVert = v2.transform(screenspace).perspectiveDivide();
         Vertex maxYVert = v3.transform(screenspace).perspectiveDivide();
+
+        if(minYVert.triangleAreaTimesTwo(maxYVert, midYVert) < 0)
+            return;
 
         if(maxYVert.position.y < midYVert.position.y) {
             Vertex temp = maxYVert;
@@ -751,6 +820,8 @@ int main() {
         }
     }
 
+    Bitmap texture2 = Bitmap::LoadFromFile("assets/turtle.png");
+
     Mesh mesh("assets/turtle.obj");
 
     while(display.isOpen()) {
@@ -762,13 +833,13 @@ int main() {
 
         Matrix4 transform;
         transform.translate(0.0f, 0.0f, -3.0f);
-        transform.rotateX(counter * 25.0f);
+        //transform.rotateX(counter * 25.0f);
         transform.rotateY(counter * 32.0f);
-        transform.rotateZ(counter * 44.0f);
+        //transform.rotateZ(counter * 44.0f);
 
         Matrix4 mvp = projection * transform;
 
-        context.drawMesh(mesh, mvp, texture);
+        context.drawMesh(mesh, mvp, texture2);
 
         display.draw();
     }
