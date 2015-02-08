@@ -441,7 +441,7 @@ public:
         sf::Texture texture;
         texture.loadFromFile(filename);
         Bitmap bitmap(texture.getSize().x, texture.getSize().y);
-        memcpy(bitmap.pixels, texture.copyToImage().getPixelsPtr(), texture.getMaximumSize());
+        memcpy(bitmap.pixels, texture.copyToImage().getPixelsPtr(), bitmap.width * bitmap.height * 4);
         //bitmap.pixels = (unsigned char*)texture.copyToImage().getPixelsPtr();
         return bitmap;
     }
@@ -864,7 +864,7 @@ private:
         float texCoordXXStep = (right.texcoords.x - left.texcoords.x) / xDist;
         float texCoordYXStep = (right.texcoords.y - left.texcoords.y) / xDist;
         float oneOverZXStep = (right.oneOverZ - left.oneOverZ) / xDist;
-        float depthXStep = (right.depth - left.depth)/xDist;
+        float depthXStep = (right.depth - left.depth) / xDist;
 
         float texCoordX = left.texcoords.x + texCoordXXStep * xPrestep;
         float texCoordY = left.texcoords.y + texCoordYXStep * xPrestep;
@@ -945,7 +945,7 @@ int main() {
     Matrix4 projection;
     projection.perspective(90.0f, 800.0f/600.0f, 0.1f, 1000.0f);
 
-    Bitmap texture(128, 128);
+    Bitmap texture(16, 16);
     for(int j = 0; j < texture.height; ++j) {
         for(int i = 0; i < texture.width; ++i) {
             bool isLight = (i + j) % 2 == 0;
@@ -957,8 +957,13 @@ int main() {
         }
     }
 
-    Bitmap turtleTex = Bitmap::LoadFromFile("assets/turtle_pink.png");
     Bitmap marioTex = Bitmap::LoadFromFile("assets/mario.png");
+    Bitmap turtleTex = Bitmap::LoadFromFile("assets/turtle.png");
+
+    Mesh portal("assets/portal.obj");
+    Mesh mario("assets/mario.obj");
+    Mesh box("assets/box.obj");
+    Mesh turtle("assets/turtle.obj");
 
     Animation anim(8, 0.08f);
     anim.addFrame(Mesh("assets/animation/turtle1.obj"));
@@ -969,11 +974,6 @@ int main() {
     anim.addFrame(Mesh("assets/animation/turtle6.obj"));
     anim.addFrame(Mesh("assets/animation/turtle7.obj"));
     anim.addFrame(Mesh("assets/animation/turtle8.obj"));
-
-    Mesh portal("assets/portal.obj");
-    Mesh mario("assets/mario.obj");
-    Mesh box("assets/box.obj");
-    Mesh turtle("assets/turtle.obj");
 
     while(display.isOpen()) {
 
@@ -986,17 +986,25 @@ int main() {
         starfield.render(context, dt);
 
         Matrix4 transform1;
-        transform1.translate(cos(counter * 0.5f) * 5.0f, 0.0f, 5.0f);
-        transform1.rotateY(counter * 32.0f);
+        transform1.translate(-4.0f, 0.0f, 5.0f);
+        transform1.rotateY(counter * 50.0f);
 
         Matrix4 transform2;
         transform2.translate(0.0f, 0.0f, 4.0f);
-        transform2.rotateY(counter * 33.0f);
-        transform2.scale(2.0f, 2.0f, 2.0f);
+        transform2.rotateY(counter * 60.0f);
+        transform2.translate(0.0f, -1.5f, 0.0f);
+
+        Matrix4 transform3;
+        transform3.translate(4.0f, 0.0f, 5.0f);
+        transform3.rotateX(counter * 44.0f);
+        transform3.rotateY(counter * 44.0f);
+        transform3.rotateZ(counter * 44.0f);
+        transform2.scale(1.5f, 1.5f, 1.5f);
 
         anim.animate(dt);
-        context.drawMesh(anim.frame(), projection * transform2, turtleTex);
-        context.drawMesh(portal, projection * transform1, texture);
+        context.drawMesh(anim.frame(), projection * transform1, turtleTex);
+        context.drawMesh(mario, projection * transform2, marioTex);
+        context.drawMesh(box, projection * transform3, texture);
 
         display.draw();
     }
