@@ -11,7 +11,11 @@
 #include <vector>
 #include <map>
 #include <utility>
+
 #define PI 3.14159265
+
+typedef unsigned char byte;
+typedef unsigned int  uint;
 
 template <typename T>
 void LOG(const T& value) {
@@ -24,8 +28,15 @@ void LOG(const U& head, const T&... tail) {
     LOG(tail...);
 }
 
-float random() {
+inline float random() {
     return static_cast <float> (rand()) / static_cast <float> (RAND_MAX);
+}
+inline float clamp(float value, float lower, float upper) {
+    return value <= lower ? lower : value >= upper ? upper : value;
+}
+
+float lerp(float a, float b, float factor) {
+    return a * (1.0f-factor) + b * factor;
 }
 
 class Vector4 {
@@ -74,6 +85,12 @@ public:
         assert(factor != 0);
         return Vector4(x / factor, y / factor, z / factor, w / factor);
     }
+    static Vector4 polar(float radius, float inclination, float azimuth) {
+        return Vector4(radius * sinf(inclination) * cosf(azimuth), radius * sinf(inclination) * sinf(azimuth), radius * cosf(inclination));
+    }
+    static Vector4 polarDegrees(float radius, float inclination, float azimuth) {
+        return polar(radius, inclination * PI / 180.0f, azimuth * PI / 180.0f);
+    }
     float x {0.0f};
     float y {0.0f};
     float z {0.0f};
@@ -84,14 +101,89 @@ std::ostream& operator<<(std::ostream& out, const Vector4& rhs) {
     return out;
 }
 
+Vector4 g_lightDirection;
+
+class Quaternion {
+public:
+    Quaternion(float x, float y, float z, float w) {
+        this->x = x;
+        this->y = y;
+        this->z = z;
+        this->w = w;
+    }
+    float length() const {
+        return (float)sqrt(x*x + y*y + z*z + w*w);
+    }
+    Quaternion normalize() {
+        float len = length();
+        if(len != 0) {
+            x /= len;
+            y /= len;
+            z /= len;
+            w /= len;
+        }
+        return *this;
+    }
+    Quaternion conjugate() const {
+        return Quaternion(-x, -y, -z, w);
+    }
+    Quaternion operator*(const Quaternion& q) const {
+        float ww = w * q.w - x * q.x - y * q.y - z * q.z;
+        float xx = x * q.w + w * q.x + y * q.z - z * q.y;
+        float yy = y * q.w + w * q.y + z * q.x - x * q.z;
+        float zz = z * q.w + w * q.z + x * q.y - y * q.x;
+        return Quaternion(xx, yy, zz, ww);
+    }
+    Quaternion operator*(const Vector4& v) const {
+        float ww = -x * v.x - y * v.y - z * v.z;
+        float xx =  w * v.x + y * v.z - z * v.y;
+        float yy =  w * v.y + z * v.x - x * v.z;
+        float zz =  w * v.z + x * v.y - y * v.x;
+        return Quaternion(xx, yy, zz, ww);
+    }
+    Quaternion operator+(const Quaternion& q) const {
+        return Quaternion(x + q.x, y + q.y, z + q.z, w + q.w);
+    }
+    Quaternion operator-(const Quaternion& q) const {
+        return Quaternion(x - q.x, y - q.y, z - q.z, w - q.w);
+    }
+    float dot(const Quaternion& q) const {
+        return x * q.x + y * q.y + z * q.z + w * q.w;
+    }
+    Quaternion rotate(float angle, Vector4 axis) {
+        float sinHalfAngle = sinf((angle / 2.0f) * PI / 180.0f);
+        float cosHalfAngle = cosf((angle / 2.0f) * PI / 180.0f);
+
+        float xx = axis.x * sinHalfAngle;
+        float yy = axis.y * sinHalfAngle;
+        float zz = axis.z * sinHalfAngle;
+        float ww = cosHalfAngle;
+
+        Quaternion rotation(xx, yy, zz, ww);
+        Quaternion conjugate = rotation.conjugate();
+        Quaternion result = rotation * (*this) * conjugate;
+
+        x = result.x;
+        y = result.y;
+        z = result.z;
+        w = result.w;
+
+        return *this;
+    }
+    float x {0.0f};
+    float y {0.0f};
+    float z {0.0f};
+    float w {0.0f};
+};
+
 class Matrix4 {
 public:
     Matrix4() {
         identity();
     }
     void identity() {
-        for (unsigned int i = 0; i < 4; ++i) {
-            for (unsigned int j = 0; j < 4; ++j) {
+        for (uint i = 0; i < 4; ++i) {
+            for (uint j = 0; j < 4; ++j) {
                 matrix[j][i] = (i == j ? 1.0f : 0.0f);
             }
         }
@@ -121,8 +213,8 @@ public:
     }
     Matrix4 operator*(const Matrix4& mat) {
         Matrix4 m;
-        for (unsigned int i = 0; i < 4; ++i) {
-            for (unsigned int j = 0; j < 4; ++j) {
+        for (uint i = 0; i < 4; ++i) {
+            for (uint j = 0; j < 4; ++j) {
                 m[i][j] = matrix[0][j] * mat.matrix[i][0] +
                           matrix[1][j] * mat.matrix[i][1] +
                           matrix[2][j] * mat.matrix[i][2] +
@@ -133,7 +225,7 @@ public:
     }
     Vector4 operator*(const Vector4& vec) const {
         float a[4];
-        for (unsigned int i = 0; i < 4; ++i) {
+        for (uint i = 0; i < 4; ++i) {
             a[i] = matrix[0][i] * vec.x +
                    matrix[1][i] * vec.y +
                    matrix[2][i] * vec.z +
@@ -154,8 +246,8 @@ public:
     void rotateX(float angle) {
         Matrix4 m;
         float radian = (angle * ((float)PI / 180.0f));
-        float sinus = sin(radian);
-        float cosinus = cos(radian);
+        float sinus = sinf(radian);
+        float cosinus = cosf(radian);
         m[1][1] = cosinus;
         m[2][2] = cosinus;
         m[1][2] = sinus;
@@ -166,8 +258,8 @@ public:
     void rotateY(float angle) {
         Matrix4 m;
         float radian = (angle * ((float)PI / 180.0f));
-        float sinus = sin(radian);
-        float cosinus = cos(radian);
+        float sinus = sinf(radian);
+        float cosinus = cosf(radian);
         m[0][0] = cosinus;
         m[2][2] = cosinus;
         m[0][2] = -sinus;
@@ -178,8 +270,8 @@ public:
     void rotateZ(float angle) {
         Matrix4 m;
         float radian = (angle * ((float)PI / 180.0f));
-        float sinus = sin(radian);
-        float cosinus = cos(radian);
+        float sinus = sinf(radian);
+        float cosinus = cosf(radian);
         m[0][0] = cosinus;
         m[1][1] = cosinus;
         m[0][1] = sinus;
@@ -193,6 +285,138 @@ public:
         m[2][2] = z;
         *this = *this * m;
     }
+    bool invert() {
+        float inv[4][4];
+
+        inv[0][0] =     matrix[1][1]  * matrix[2][2] * matrix[3][3] -
+                        matrix[1][1]  * matrix[3][2] * matrix[2][3] -
+                        matrix[1][2]  * matrix[2][1]  * matrix[3][3] +
+                        matrix[1][2]  * matrix[3][1]  * matrix[2][3] +
+                        matrix[1][3] * matrix[2][1]  * matrix[3][2] -
+                        matrix[1][3] * matrix[3][1]  * matrix[2][2];
+
+        inv[0][1] =     -matrix[0][1]  * matrix[2][2] * matrix[3][3] +
+                        matrix[0][1]  * matrix[3][2] * matrix[2][3] +
+                        matrix[0][2]  * matrix[2][1]  * matrix[3][3] -
+                        matrix[0][2]  * matrix[3][1]  * matrix[2][3] -
+                        matrix[0][3] * matrix[2][1]  * matrix[3][2] +
+                        matrix[0][3] * matrix[3][1]  * matrix[2][2];
+
+        inv[0][2] =     matrix[0][1]  * matrix[1][2] * matrix[3][3] -
+                        matrix[0][1]  * matrix[3][2] * matrix[1][3] -
+                        matrix[0][2]  * matrix[1][1] * matrix[3][3] +
+                        matrix[0][2]  * matrix[3][1] * matrix[1][3] +
+                        matrix[0][3] * matrix[1][1] * matrix[3][2] -
+                        matrix[0][3] * matrix[3][1] * matrix[1][2];
+
+        inv[0][3] =     -matrix[0][1]  * matrix[1][2] * matrix[2][3] +
+                        matrix[0][1]  * matrix[2][2] * matrix[1][3] +
+                        matrix[0][2]  * matrix[1][1] * matrix[2][3] -
+                        matrix[0][2]  * matrix[2][1] * matrix[1][3] -
+                        matrix[0][3] * matrix[1][1] * matrix[2][2] +
+                        matrix[0][3] * matrix[2][1] * matrix[1][2];
+
+        inv[1][0] =     -matrix[1][0]  * matrix[2][2] * matrix[3][3] +
+                        matrix[1][0]  * matrix[3][2] * matrix[2][3] +
+                        matrix[1][2]  * matrix[2][0] * matrix[3][3] -
+                        matrix[1][2]  * matrix[3][0] * matrix[2][3] -
+                        matrix[1][3] * matrix[2][0] * matrix[3][2] +
+                        matrix[1][3] * matrix[3][0] * matrix[2][2];
+
+        inv[1][1] =     matrix[0][0]  * matrix[2][2] * matrix[3][3] -
+                        matrix[0][0]  * matrix[3][2] * matrix[2][3] -
+                        matrix[0][2]  * matrix[2][0] * matrix[3][3] +
+                        matrix[0][2]  * matrix[3][0] * matrix[2][3] +
+                        matrix[0][3] * matrix[2][0] * matrix[3][2] -
+                        matrix[0][3] * matrix[3][0] * matrix[2][2];
+
+        inv[1][2] =     -matrix[0][0]  * matrix[1][2] * matrix[3][3] +
+                        matrix[0][0]  * matrix[3][2] * matrix[1][3] +
+                        matrix[0][2]  * matrix[1][0] * matrix[3][3] -
+                        matrix[0][2]  * matrix[3][0] * matrix[1][3] -
+                        matrix[0][3] * matrix[1][0] * matrix[3][2] +
+                        matrix[0][3] * matrix[3][0] * matrix[1][2];
+
+        inv[1][3] =     matrix[0][0]  * matrix[1][2] * matrix[2][3] -
+                        matrix[0][0]  * matrix[2][2] * matrix[1][3] -
+                        matrix[0][2]  * matrix[1][0] * matrix[2][3] +
+                        matrix[0][2]  * matrix[2][0] * matrix[1][3] +
+                        matrix[0][3] * matrix[1][0] * matrix[2][2] -
+                        matrix[0][3] * matrix[2][0] * matrix[1][2];
+
+        inv[2][0] =     matrix[1][0]  * matrix[2][1] * matrix[3][3] -
+                        matrix[1][0]  * matrix[3][1] * matrix[2][3] -
+                        matrix[1][1]  * matrix[2][0] * matrix[3][3] +
+                        matrix[1][1]  * matrix[3][0] * matrix[2][3] +
+                        matrix[1][3] * matrix[2][0] * matrix[3][1] -
+                        matrix[1][3] * matrix[3][0] * matrix[2][1];
+
+        inv[2][1] =     -matrix[0][0]  * matrix[2][1] * matrix[3][3] +
+                        matrix[0][0]  * matrix[3][1] * matrix[2][3] +
+                        matrix[0][1]  * matrix[2][0] * matrix[3][3] -
+                        matrix[0][1]  * matrix[3][0] * matrix[2][3] -
+                        matrix[0][3] * matrix[2][0] * matrix[3][1] +
+                        matrix[0][3] * matrix[3][0] * matrix[2][1];
+
+        inv[2][2] =     matrix[0][0]  * matrix[1][1] * matrix[3][3] -
+                        matrix[0][0]  * matrix[3][1] * matrix[1][3] -
+                        matrix[0][1]  * matrix[1][0] * matrix[3][3] +
+                        matrix[0][1]  * matrix[3][0] * matrix[1][3] +
+                        matrix[0][3] * matrix[1][0] * matrix[3][1] -
+                        matrix[0][3] * matrix[3][0] * matrix[1][1];
+
+        inv[2][3] =     -matrix[0][0]  * matrix[1][1] * matrix[2][3] +
+                        matrix[0][0]  * matrix[2][1] * matrix[1][3] +
+                        matrix[0][1]  * matrix[1][0] * matrix[2][3] -
+                        matrix[0][1]  * matrix[2][0] * matrix[1][3] -
+                        matrix[0][3] * matrix[1][0] * matrix[2][1] +
+                        matrix[0][3] * matrix[2][0] * matrix[1][1];
+
+        inv[3][0] =     -matrix[1][0] * matrix[2][1] * matrix[3][2] +
+                        matrix[1][0] * matrix[3][1] * matrix[2][2] +
+                        matrix[1][1] * matrix[2][0] * matrix[3][2] -
+                        matrix[1][1] * matrix[3][0] * matrix[2][2] -
+                        matrix[1][2] * matrix[2][0] * matrix[3][1] +
+                        matrix[1][2] * matrix[3][0] * matrix[2][1];
+
+        inv[3][1] =     matrix[0][0] * matrix[2][1] * matrix[3][2] -
+                        matrix[0][0] * matrix[3][1] * matrix[2][2] -
+                        matrix[0][1] * matrix[2][0] * matrix[3][2] +
+                        matrix[0][1] * matrix[3][0] * matrix[2][2] +
+                        matrix[0][2] * matrix[2][0] * matrix[3][1] -
+                        matrix[0][2] * matrix[3][0] * matrix[2][1];
+
+        inv[3][2] =     -matrix[0][0] * matrix[1][1] * matrix[3][2] +
+                        matrix[0][0] * matrix[3][1] * matrix[1][2] +
+                        matrix[0][1] * matrix[1][0] * matrix[3][2] -
+                        matrix[0][1] * matrix[3][0] * matrix[1][2] -
+                        matrix[0][2] * matrix[1][0] * matrix[3][1] +
+                        matrix[0][2] * matrix[3][0] * matrix[1][1];
+
+        inv[3][3] =     matrix[0][0] * matrix[1][1] * matrix[2][2] -
+                        matrix[0][0] * matrix[2][1] * matrix[1][2] -
+                        matrix[0][1] * matrix[1][0] * matrix[2][2] +
+                        matrix[0][1] * matrix[2][0] * matrix[1][2] +
+                        matrix[0][2] * matrix[1][0] * matrix[2][1] -
+                        matrix[0][2] * matrix[2][0] * matrix[1][1];
+
+        // Find determinant and check if it's zero meaning matrix is not invertable
+        float det =     matrix[0][0] * inv[0][0] +
+                        matrix[1][0] * inv[0][1] +
+                        matrix[2][0] * inv[0][2] +
+                        matrix[3][0] * inv[0][3];
+
+        if (det == 0) return false;
+
+        // Fill the matrix with inverted values
+        det = 1.0 / det;
+        for(int j = 0; j < 4; j++){
+            for(int i = 0; i < 4; i++){
+                matrix[j][i] = inv[j][i] * det;
+            }
+        }
+        return true;
+    }
 private:
     float matrix[4][4];
 };
@@ -200,13 +424,13 @@ private:
 
 class Color {
 public:
-    Color(unsigned char r, unsigned char g, unsigned char b, unsigned char a) {
+    Color(byte r, byte g, byte b, byte a) {
         this->r = r;
         this->g = g;
         this->b = b;
         this->a = a;
     }
-    Color(unsigned int hex) {
+    Color(uint hex) {
         this->r = (hex >> 24) & 0xFF;
         this->g = (hex >> 16) & 0xFF;
         this->b = (hex >> 8 ) & 0xFF;
@@ -234,27 +458,33 @@ public:
         return Vector4((float)r,(float)g,(float)b,(float)a);
     }
 
-    unsigned char r;
-    unsigned char g;
-    unsigned char b;
-    unsigned char a;
+    byte r;
+    byte g;
+    byte b;
+    byte a;
 };
 
 class Vertex {
 public:
-    Vertex(Vector4 position, Vector4 texcoords) :
+    Vertex(Vector4 position, Vector4 texcoords, Vector4 normal) :
         position(position),
-        texcoords(texcoords) {
+        texcoords(texcoords),
+        normal(normal) {
     }
     static Vertex Random() {
         Vector4 v((random() - 0.5f) * 2.0f, (random() - 0.5f) * 2.0f, 1.0f, 1.0f);
-        return Vertex(v, Color::Random().asVector4());
+        return Vertex(v, Color::Random().asVector4(), Color::Random().asVector4());
     }
-    Vertex transform(Matrix4& mat) {
-        return Vertex(mat * position, texcoords);
+    Vertex transform(Matrix4& transformMat, Matrix4& normalMat) {
+        return Vertex(transformMat * position, texcoords, normalMat * normal);
     }
     Vertex perspectiveDivide() const {
-        return Vertex(Vector4(position.x/position.w, position.y/position.w, position.z/position.w, position.w), texcoords);
+        return Vertex( Vector4( position.x/position.w,
+                                position.y/position.w,
+                                position.z/position.w,
+                                position.w ),
+                       texcoords,
+                       normal );
     }
     float triangleAreaTimesTwo(Vertex b, Vertex c) {
         float x1 = b.position.x - position.x;
@@ -267,7 +497,8 @@ public:
     }
     Vertex lerp(const Vertex& other, float lerpAmt) {
         return Vertex( position.lerp(other.position, lerpAmt),
-                       texcoords.lerp(other.texcoords, lerpAmt) );
+                       texcoords.lerp(other.texcoords, lerpAmt),
+                       normal.lerp(other.normal, lerpAmt) );
     }
     bool isInsideViewFrustum() {
         return fabs(position.x) <= fabs(position.w) &&
@@ -284,6 +515,7 @@ public:
 
     Vector4 position;
     Vector4 texcoords;
+    Vector4 normal;
 };
 
 std::ostream& operator<<(std::ostream& out, const Vertex& rhs) {
@@ -298,6 +530,10 @@ public:
         depth[0] = minYVert.position.z;
         depth[1] = midYVert.position.z;
         depth[2] = maxYVert.position.z;
+
+        lightAmt[0] = clamp(minYVert.normal.dot(g_lightDirection), 0.0f, 1.0f) * 0.75f + 0.25f;
+        lightAmt[1] = clamp(midYVert.normal.dot(g_lightDirection), 0.0f, 1.0f) * 0.75f + 0.25f;
+        lightAmt[2] = clamp(maxYVert.normal.dot(g_lightDirection), 0.0f, 1.0f) * 0.75f + 0.25f;
 
         oneOverZ[0] = 1.0f / minYVert.position.w;
         oneOverZ[1] = 1.0f / midYVert.position.w;
@@ -323,6 +559,9 @@ public:
 
         depthXStep = calcStepX(depth, minYVert, midYVert, maxYVert, oneOverdX);
         depthYStep = calcStepY(depth, minYVert, midYVert, maxYVert, oneOverdY);
+
+        lightAmtXStep = calcStepX(lightAmt, minYVert, midYVert, maxYVert, oneOverdX);
+        lightAmtYStep = calcStepY(lightAmt, minYVert, midYVert, maxYVert, oneOverdY);
     }
     template<typename T>
     inline T calcStepX(T values[], Vertex minYVert, Vertex midYVert, Vertex maxYVert, float oneOverdX) {
@@ -350,6 +589,10 @@ public:
     float depth[3];
     float depthXStep;
     float depthYStep;
+
+    float lightAmt[3];
+    float lightAmtXStep;
+    float lightAmtYStep;
 };
 
 class Edge {
@@ -374,6 +617,9 @@ public:
 
         depth = gradients.depth[startIndex] + gradients.depthXStep * xPrestep + gradients.depthYStep * yPrestep;
         depthStep = gradients.depthYStep + gradients.depthXStep * xStep;
+
+        lightAmt = gradients.lightAmt[startIndex] + gradients.lightAmtXStep * xPrestep + gradients.lightAmtYStep * yPrestep;
+        lightAmtStep = gradients.lightAmtYStep + gradients.lightAmtXStep * xStep;
     }
 
     void Step() {
@@ -381,6 +627,7 @@ public:
         texcoords = texcoords + texcoordsStep;
         oneOverZ  = oneOverZ + oneOverZStep;
         depth     = depth + depthStep;
+        lightAmt  = lightAmt + lightAmtStep;
     }
 
     float x;
@@ -396,6 +643,9 @@ public:
 
     float depth;
     float depthStep;
+
+    float lightAmt;
+    float lightAmtStep;
 };
 
 class Bitmap {
@@ -403,19 +653,19 @@ public:
     Bitmap(unsigned short width, unsigned short height) {
         this->width = width;
         this->height = height;
-        this->pixels = new unsigned char[width * height * 4];
+        this->pixels = new byte[width * height * 4];
     }
     ~Bitmap() {
         delete[] pixels;
     }
     void clear(Color color) {
-        for (unsigned int x = 0; x < width; ++x) {
-            for (unsigned int y = 0; y < height; ++y) {
+        for (uint x = 0; x < width; ++x) {
+            for (uint y = 0; y < height; ++y) {
                 setPixel(x, y, color);
             }
         }
     }
-    void setPixel(unsigned int x, unsigned int y, Color color) {
+    void setPixel(uint x, uint y, Color color) {
         int index = (x + y * width) * 4;
         if(index < 0 || index >= width * height * 4) return;
 
@@ -424,7 +674,7 @@ public:
         pixels[index + 2] = color.b; // B
         pixels[index + 3] = color.a; // A
     }
-    void copyPixel(unsigned int destX, unsigned int destY, unsigned int srcX, unsigned int srcY, const Bitmap& src) {
+    void copyPixel(uint destX, uint destY, uint srcX, uint srcY, const Bitmap& src, float lightAmt) {
         int destIndex = (destX + destY * width) * 4;
         int srcIndex = (srcX + srcY * src.width) * 4;
 
@@ -432,23 +682,21 @@ public:
         if(destIndex < 0 || destIndex >= width * height * 4) return;
         if(srcIndex < 0 || srcIndex >= src.width * src.height * 4) return;
 
-        pixels[destIndex]     = src.pixels[srcIndex    ]; // R
-        pixels[destIndex + 1] = src.pixels[srcIndex + 1]; // G
-        pixels[destIndex + 2] = src.pixels[srcIndex + 2]; // B
-        pixels[destIndex + 3] = src.pixels[srcIndex + 3]; // A
+        pixels[destIndex]     = (byte)(src.pixels[srcIndex    ] * lightAmt); // R
+        pixels[destIndex + 1] = (byte)(src.pixels[srcIndex + 1] * lightAmt); // G
+        pixels[destIndex + 2] = (byte)(src.pixels[srcIndex + 2] * lightAmt); // B
+        pixels[destIndex + 3] = (byte)(src.pixels[srcIndex + 3]);            // A
     }
     static Bitmap LoadFromFile(const std::string& filename) {
         sf::Texture texture;
         texture.loadFromFile(filename);
         Bitmap bitmap(texture.getSize().x, texture.getSize().y);
         memcpy(bitmap.pixels, texture.copyToImage().getPixelsPtr(), bitmap.width * bitmap.height * 4);
-        //bitmap.pixels = (unsigned char*)texture.copyToImage().getPixelsPtr();
         return bitmap;
     }
-
     unsigned short width;
     unsigned short height;
-    unsigned char* pixels;
+    byte* pixels;
 };
 
 class Display {
@@ -485,13 +733,13 @@ class StarsField {
 
     class Star {
     public:
-        Star(unsigned int id, float x, float y, float z, Color color) : color(color) {
+        Star(uint id, float x, float y, float z, Color color) : color(color) {
             this->id = id;
             this->x  = x;
             this->y  = y;
             this->z  = z;
         }
-        unsigned int id;
+        uint id;
         float x,y,z;
         Color color;
     };
@@ -507,7 +755,7 @@ public:
         }
     }
     ~StarsField() {
-        for(unsigned int i = 0; i < stars.size(); ++i) {
+        for(uint i = 0; i < stars.size(); ++i) {
             delete stars[i];
         }
         stars.empty();
@@ -522,8 +770,8 @@ public:
 
         float halfFOV = tan((130.0f / 2.0f) * (PI / 180.0f));
 
-        unsigned int halfWidth = target.width / 2;
-        unsigned int halfHeight = target.height / 2;
+        uint halfWidth = target.width / 2;
+        uint halfHeight = target.height / 2;
 
         for(auto& star : stars) {
             star->z -= speed * dt;
@@ -559,9 +807,9 @@ class OBJLoader {
 public:
 
     struct OBJIndex {
-        unsigned int vertexIndex;
-        unsigned int texCoordIndex;
-        unsigned int normalIndex;
+        uint vertexIndex;
+        uint texCoordIndex;
+        uint normalIndex;
     };
 
     struct OBJModel {
@@ -576,7 +824,7 @@ public:
         std::vector<Vector4>      texCoords;
         std::vector<Vector4>      normals;
         std::vector<Vector4>      tangents;
-        std::vector<unsigned int> indices;
+        std::vector<uint> indices;
     };
 
     static OBJModel Load(std::string filename) {
@@ -608,13 +856,13 @@ public:
                                                      0.0f) );
                 }
                 else if(tokens[0] == "f") {
-                    for(unsigned int i = 1; i < tokens.size(); ++i) {
+                    for(uint i = 1; i < tokens.size(); ++i) {
                         std::vector<std::string> indexTokens = split(tokens[i], '/');
 
                         OBJIndex index;
-                        index.vertexIndex   = StringToNumber<unsigned int>(indexTokens[0]) - 1;
-                        index.texCoordIndex = StringToNumber<unsigned int>(indexTokens[1]) - 1;
-                        index.normalIndex   = StringToNumber<unsigned int>(indexTokens[2]) - 1;
+                        index.vertexIndex   = StringToNumber<uint>(indexTokens[0]) - 1;
+                        index.texCoordIndex = StringToNumber<uint>(indexTokens[1]) - 1;
+                        index.normalIndex   = StringToNumber<uint>(indexTokens[2]) - 1;
 
                         model.indices.push_back(index);
                     }
@@ -628,10 +876,10 @@ public:
     static IndexedModel ToIndexedModel(const OBJModel& obj) {
 
         IndexedModel model;
-        std::map<unsigned int, unsigned int> indexMap; // OBJModel.indices -> IndexModel.indices
-        unsigned int currentVertexIndex = 0;
+        std::map<uint, uint> indexMap; // OBJModel.indices -> IndexModel.indices
+        uint currentVertexIndex = 0;
 
-        for(unsigned int i = 0; i < obj.indices.size(); ++i) {
+        for(uint i = 0; i < obj.indices.size(); ++i) {
             OBJIndex currentIndex = obj.indices[i];
 
             Vector4 currentPosition = obj.vertices[currentIndex.vertexIndex];
@@ -640,7 +888,7 @@ public:
 
             // Check for duplicates O(n^2)
             int previousVertexIndex = -1;
-            for(unsigned int j = 0; j < i; ++j) {
+            for(uint j = 0; j < i; ++j) {
                 OBJIndex oldIndex = obj.indices[j];
 
                 if(currentIndex.vertexIndex == oldIndex.vertexIndex &&
@@ -661,7 +909,7 @@ public:
                 currentVertexIndex++;
             }
             else {
-                model.indices.push_back(indexMap[(unsigned int)previousVertexIndex]);
+                model.indices.push_back(indexMap[(uint)previousVertexIndex]);
             }
         }
         return model;
@@ -689,18 +937,19 @@ public:
     Mesh(std::string filename) {
         OBJLoader::IndexedModel model = OBJLoader::ToIndexedModel(OBJLoader::Load(filename));
 
-        for(unsigned int i = 0; i < model.vertices.size(); ++i) {
+        for(uint i = 0; i < model.vertices.size(); ++i) {
             vertices.push_back(Vertex( model.vertices[i],
-                                       model.texCoords[i]) );
+                                       model.texCoords[i],
+                                       model.normals[i] ));
         }
 
         indices.resize(model.indices.size());
-        for(unsigned int j = 0; j < model.indices.size(); ++j) {
+        for(uint j = 0; j < model.indices.size(); ++j) {
             indices[j] = model.indices[j];
         }
     }
     std::vector<Vertex> vertices;
-    std::vector<unsigned int> indices;
+    std::vector<uint> indices;
 };
 
 class RenderContext : public Bitmap {
@@ -714,16 +963,19 @@ public:
         delete[] zBuffer;
     }
     void clearDepthBuffer() {
-        unsigned int size = width * height;
-        for(unsigned int i = 0; i < size; ++i) {
+        uint size = width * height;
+        for(uint i = 0; i < size; ++i) {
             zBuffer[i] = 1.0f;
         }
     }
-    void drawMesh(Mesh mesh, Matrix4 transform, const Bitmap& texture) {
-        for(unsigned int i = 0; i < mesh.indices.size(); i += 3) {
-            drawTriangle( mesh.vertices[mesh.indices[i    ]].transform(transform),
-                          mesh.vertices[mesh.indices[i + 1]].transform(transform),
-                          mesh.vertices[mesh.indices[i + 2]].transform(transform),
+    void drawMesh(Mesh mesh, Matrix4 viewProjection, Matrix4 transform, const Bitmap& texture) {
+
+        Matrix4 mvp = viewProjection * transform;
+
+        for(uint i = 0; i < mesh.indices.size(); i += 3) {
+            drawTriangle( mesh.vertices[mesh.indices[i    ]].transform(mvp, transform),
+                          mesh.vertices[mesh.indices[i + 1]].transform(mvp, transform),
+                          mesh.vertices[mesh.indices[i + 2]].transform(mvp, transform),
                           texture );
         }
     }
@@ -738,7 +990,7 @@ public:
             return;
         }
 
-        if(!v1Inside && !v2Inside && !v3Inside) return;
+        //if(!v1Inside && !v2Inside && !v3Inside) return;
 
         std::vector<Vertex> vertices;
         std::vector<Vertex> auxiliaryList;
@@ -752,7 +1004,7 @@ public:
            clipPolygonAxis(vertices, auxiliaryList, 2)) {
 
             Vertex initialVertex = vertices[0];
-            for(unsigned int i = 1; i < vertices.size() - 1; ++i) {
+            for(uint i = 1; i < vertices.size() - 1; ++i) {
                 fillTriangle(initialVertex, vertices[i], vertices[i + 1], texture);
             }
         }
@@ -800,9 +1052,11 @@ private:
         Matrix4 screenspace;
         screenspace.viewport(width, height);
 
-        Vertex minYVert = v1.transform(screenspace).perspectiveDivide();
-        Vertex midYVert = v2.transform(screenspace).perspectiveDivide();
-        Vertex maxYVert = v3.transform(screenspace).perspectiveDivide();
+        Matrix4 indentity;
+
+        Vertex minYVert = v1.transform(screenspace, indentity).perspectiveDivide();
+        Vertex midYVert = v2.transform(screenspace, indentity).perspectiveDivide();
+        Vertex maxYVert = v3.transform(screenspace, indentity).perspectiveDivide();
 
         if(minYVert.triangleAreaTimesTwo(maxYVert, midYVert) >= 0)
             return;
@@ -828,15 +1082,15 @@ private:
         scanTriangle(minYVert, midYVert, maxYVert, minYVert.triangleAreaTimesTwo(maxYVert, midYVert) >= 0, texture);
     }
     void scanTriangle(Vertex minYVert, Vertex midYVert, Vertex maxYVert, bool handedness, const Bitmap& texture) {
-        Gradients gradiends (minYVert, midYVert, maxYVert);
-        Edge topToBottom    (gradiends, minYVert, maxYVert, 0);
-        Edge topToMiddle    (gradiends, minYVert, midYVert, 0);
-        Edge middleToBottom (gradiends, midYVert, maxYVert, 1);
+        Gradients gradients (minYVert, midYVert, maxYVert);
+        Edge topToBottom    (gradients, minYVert, maxYVert, 0);
+        Edge topToMiddle    (gradients, minYVert, midYVert, 0);
+        Edge middleToBottom (gradients, midYVert, maxYVert, 1);
 
-        scanEdges(topToBottom, topToMiddle, handedness, texture);
-        scanEdges(topToBottom, middleToBottom, handedness, texture);
+        scanEdges(gradients, topToBottom, topToMiddle, handedness, texture);
+        scanEdges(gradients, topToBottom, middleToBottom, handedness, texture);
     }
-    void scanEdges(Edge& a, Edge& b, bool handedness, const Bitmap& texture) {
+    void scanEdges(const Gradients& gradients, Edge& a, Edge& b, bool handedness, const Bitmap& texture) {
         Edge* left = &a;
         Edge* right = &b;
 
@@ -846,30 +1100,31 @@ private:
             right = temp;
         }
 
-        unsigned int yStart = b.yStart;
-        unsigned int yEnd = b.yEnd;
+        uint yStart = b.yStart;
+        uint yEnd = b.yEnd;
 
-        for (unsigned int j = yStart; j < yEnd; ++j) {
-            drawScanLine(*left, *right, j, texture);
+        for (uint j = yStart; j < yEnd; ++j) {
+            drawScanLine(gradients, *left, *right, j, texture);
             left->Step();
             right->Step();
         }
     }
-    void drawScanLine(const Edge& left, const Edge& right, unsigned int j, const Bitmap& texture) {
+    void drawScanLine(const Gradients& gradients, const Edge& left, const Edge& right, uint j, const Bitmap& texture) {
         int xMin = (int)ceilf(left.x);
         int xMax = (int)ceilf(right.x);
-
         float xPrestep = xMin - left.x;
-        float xDist = right.x - left.x;
-        float texCoordXXStep = (right.texcoords.x - left.texcoords.x) / xDist;
-        float texCoordYXStep = (right.texcoords.y - left.texcoords.y) / xDist;
-        float oneOverZXStep = (right.oneOverZ - left.oneOverZ) / xDist;
-        float depthXStep = (right.depth - left.depth) / xDist;
+
+        float texCoordXXStep = gradients.texcoordsXStep.x;
+        float texCoordYXStep = gradients.texcoordsXStep.y;
+        float oneOverZXStep  = gradients.oneOverZXStep;
+        float depthXStep     = gradients.depthXStep;
+        float lightAmtXStep  = gradients.lightAmtXStep;
 
         float texCoordX = left.texcoords.x + texCoordXXStep * xPrestep;
         float texCoordY = left.texcoords.y + texCoordYXStep * xPrestep;
-        float oneOverZ = left.oneOverZ + oneOverZXStep * xPrestep;
-        float depth = left.depth + depthXStep * xPrestep;
+        float oneOverZ  = left.oneOverZ + oneOverZXStep * xPrestep;
+        float depth     = left.depth + depthXStep * xPrestep;
+        float lightAmt  = left.lightAmt + lightAmtXStep * xPrestep;
 
         for(int i = xMin; i < xMax; ++i) {
 
@@ -882,13 +1137,14 @@ private:
                 int srcX = (int)((texCoordX * z) * (float)(texture.width - 1) + 0.5f);
                 int srcY = (int)((texCoordY * z) * (float)(texture.height - 1) + 0.5f);
 
-                copyPixel(i, j, srcX, srcY, texture);
+                copyPixel(i, j, srcX, srcY, texture, lightAmt);
             }
 
             texCoordX += texCoordXXStep;
             texCoordY += texCoordYXStep;
-            oneOverZ += oneOverZXStep;
-            depth += depthXStep;
+            oneOverZ  += oneOverZXStep;
+            depth     += depthXStep;
+            lightAmt  += lightAmtXStep;
         }
     }
 
@@ -923,10 +1179,25 @@ public:
 
 private:
     std::vector<Mesh> frames;
-    unsigned int currentFrame;
-    unsigned int totalFrames;
+    uint currentFrame;
+    uint totalFrames;
     float frameTimeInSeconds;
     float timer;
+};
+
+class Instance {
+public:
+    Instance(const Mesh& mesh, const Bitmap& texture) :
+        mesh(mesh),
+        texture(texture) {
+    }
+    void render(RenderContext& target, Matrix4 vp) {
+        target.drawMesh(mesh, vp, transform, texture);
+    }
+
+    const Mesh&   mesh;
+    const Bitmap& texture;
+    Matrix4       transform;
 };
 
 int main() {
@@ -943,7 +1214,7 @@ int main() {
     float counter = 0.0f;
 
     Matrix4 projection;
-    projection.perspective(90.0f, 800.0f/600.0f, 0.1f, 1000.0f);
+    projection.perspective(100.0f, 800.0f/600.0f, 0.1f, 100.0f);
 
     Bitmap texture(16, 16);
     for(int j = 0; j < texture.height; ++j) {
@@ -960,12 +1231,17 @@ int main() {
     Bitmap marioTex = Bitmap::LoadFromFile("assets/mario.png");
     Bitmap turtleTex = Bitmap::LoadFromFile("assets/turtle.png");
 
-    Mesh portal("assets/portal.obj");
-    Mesh mario("assets/mario.obj");
-    Mesh box("assets/box.obj");
-    Mesh turtle("assets/turtle.obj");
+    Mesh model1("assets/mario.obj");
+    Mesh model2("assets/turtle.obj");
+    Mesh model3("assets/box.obj");
+    Mesh model4("assets/portal.obj");
 
-    Animation anim(8, 0.08f);
+    Instance mario  (model1, marioTex);
+    Instance turtle (model2, turtleTex);
+    Instance box    (model3, texture);
+    Instance portal (model4, texture);
+
+    /*Animation anim(8, 0.08f);
     anim.addFrame(Mesh("assets/animation/turtle1.obj"));
     anim.addFrame(Mesh("assets/animation/turtle2.obj"));
     anim.addFrame(Mesh("assets/animation/turtle3.obj"));
@@ -973,38 +1249,83 @@ int main() {
     anim.addFrame(Mesh("assets/animation/turtle5.obj"));
     anim.addFrame(Mesh("assets/animation/turtle6.obj"));
     anim.addFrame(Mesh("assets/animation/turtle7.obj"));
-    anim.addFrame(Mesh("assets/animation/turtle8.obj"));
+    anim.addFrame(Mesh("assets/animation/turtle8.obj"));*/
+
+    Vector4 direction;
+    Vector4 position {0.0f, 0.0f, 4.0f};
+    float angle {0.0f};
+    float speed {0.0f};
+    float anglef {0.0f};
+    bool turbo = false;
 
     while(display.isOpen()) {
 
         float dt = clock.restart().asSeconds();
         counter += dt;
 
+        // Input
+        if(sf::Keyboard::isKeyPressed(sf::Keyboard::A)) angle -= 200.0f * dt;
+        else if(sf::Keyboard::isKeyPressed(sf::Keyboard::D)) angle += 200.0f * dt;
+
+        direction = Vector4::polarDegrees(1.0f, angle, 0.0f);
+
+        if(sf::Keyboard::isKeyPressed(sf::Keyboard::LShift)) turbo = true;
+        else turbo = false;
+
+        if(sf::Keyboard::isKeyPressed(sf::Keyboard::W)) speed += turbo ? 4.0f : 1.0f;
+        else if(sf::Keyboard::isKeyPressed(sf::Keyboard::S)) speed -= turbo ? 4.0f : 1.0f;
+
+        position = position + direction * speed * dt;
+        speed *= 0.80f;
+
+        anglef = lerp(anglef, angle, dt * 10.0f);
+
+        // Clear screen & depth buffer
         context.clear(Color::Grey());
         context.clearDepthBuffer();
 
         starfield.render(context, dt);
 
-        Matrix4 transform1;
-        transform1.translate(-4.0f, 0.0f, 5.0f);
-        transform1.rotateY(counter * 50.0f);
+        // Matrix transformations
+        Matrix4 camera;
+        camera.translate(position.x, position.y, position.z);
+        camera.translate(-direction.x, -direction.y + 2.0f, -direction.z);
+        camera.rotateY(anglef);
+        camera.invert();
 
-        Matrix4 transform2;
-        transform2.translate(0.0f, 0.0f, 4.0f);
-        transform2.rotateY(counter * 60.0f);
-        transform2.translate(0.0f, -1.5f, 0.0f);
+        Matrix4 viewProjection = projection * camera;
 
-        Matrix4 transform3;
-        transform3.translate(4.0f, 0.0f, 5.0f);
-        transform3.rotateX(counter * 44.0f);
-        transform3.rotateY(counter * 44.0f);
-        transform3.rotateZ(counter * 44.0f);
-        transform2.scale(1.5f, 1.5f, 1.5f);
+        g_lightDirection = Vector4(cosf(counter),1.0f, sinf(counter));
 
-        anim.animate(dt);
-        context.drawMesh(anim.frame(), projection * transform1, turtleTex);
-        context.drawMesh(mario, projection * transform2, marioTex);
-        context.drawMesh(box, projection * transform3, texture);
+        // Mario
+        mario.transform.identity();
+        mario.transform.translate(0.0f, -1.5f, 0.0f);
+        mario.transform.scale(3.0f, 3.0f, 3.0f);
+
+        // Turtle
+        turtle.transform.identity();
+        turtle.transform.translate(position.x, position.y, position.z);
+        turtle.transform.rotateY(angle);
+        turtle.transform.translate(0.0f, 0.0f, 0.0f);
+
+        // Portal
+        portal.transform.identity();
+        portal.transform.rotateY(counter * 15.0f);
+        portal.transform.translate(7.0f, 0.0f, 0.0f);
+        portal.transform.rotateY(counter * 100.0f);
+        portal.transform.rotateX(counter * 80.0f);
+        portal.transform.rotateZ(counter * 60.0f);
+
+        // Box
+        box.transform.identity();
+        box.transform.translate(0.0f, -2.5f, 0.0f);
+        box.transform.scale(100.0f, 1.0f, 100.0f);
+
+        // Finally render everything
+        turtle.render(context, viewProjection);
+        mario.render(context, viewProjection);
+        portal.render(context, viewProjection);
+        box.render(context, viewProjection);
 
         display.draw();
     }
