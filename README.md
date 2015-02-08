@@ -1,1 +1,2 @@
-![software_triangle.png](https://bitbucket.org/repo/RjeGd7/images/1373440691-software_triangle.png)
+# Software Renderer #
+![softrender.png](https://bitbucket.org/repo/RjeGd7/images/299876585-softrender.png)
