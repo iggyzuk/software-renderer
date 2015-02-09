@@ -1214,7 +1214,7 @@ int main() {
     float counter = 0.0f;
 
     Matrix4 projection;
-    projection.perspective(100.0f, 800.0f/600.0f, 0.1f, 100.0f);
+    projection.perspective(90.0f, 800.0f/600.0f, 0.1f, 100.0f);
 
     Bitmap texture(16, 16);
     for(int j = 0; j < texture.height; ++j) {
@@ -1234,14 +1234,14 @@ int main() {
     Mesh model1("assets/mario.obj");
     Mesh model2("assets/turtle.obj");
     Mesh model3("assets/box.obj");
-    Mesh model4("assets/portal.obj");
+    Mesh model4("assets/plane.obj");
 
     Instance mario  (model1, marioTex);
     Instance turtle (model2, turtleTex);
     Instance box    (model3, texture);
-    Instance portal (model4, texture);
+    Instance plane  (model4, texture);
 
-    /*Animation anim(8, 0.08f);
+    Animation anim(8, 0.08f);
     anim.addFrame(Mesh("assets/animation/turtle1.obj"));
     anim.addFrame(Mesh("assets/animation/turtle2.obj"));
     anim.addFrame(Mesh("assets/animation/turtle3.obj"));
@@ -1249,7 +1249,7 @@ int main() {
     anim.addFrame(Mesh("assets/animation/turtle5.obj"));
     anim.addFrame(Mesh("assets/animation/turtle6.obj"));
     anim.addFrame(Mesh("assets/animation/turtle7.obj"));
-    anim.addFrame(Mesh("assets/animation/turtle8.obj"));*/
+    anim.addFrame(Mesh("assets/animation/turtle8.obj"));
 
     Vector4 direction;
     Vector4 position {0.0f, 0.0f, 4.0f};
@@ -1258,12 +1258,18 @@ int main() {
     float anglef {0.0f};
     bool turbo = false;
 
+    Vector4 follow;
+    uint follow_id;
+
     while(display.isOpen()) {
 
         float dt = clock.restart().asSeconds();
         counter += dt;
 
         // Input
+        if(sf::Keyboard::isKeyPressed(sf::Keyboard::Num1)) follow_id = 1;
+        else if(sf::Keyboard::isKeyPressed(sf::Keyboard::Num2)) follow_id = 2;
+
         if(sf::Keyboard::isKeyPressed(sf::Keyboard::A)) angle -= 200.0f * dt;
         else if(sf::Keyboard::isKeyPressed(sf::Keyboard::D)) angle += 200.0f * dt;
 
@@ -1287,19 +1293,12 @@ int main() {
         starfield.render(context, dt);
 
         // Matrix transformations
-        Matrix4 camera;
-        camera.translate(position.x, position.y, position.z);
-        camera.translate(-direction.x, -direction.y + 2.0f, -direction.z);
-        camera.rotateY(anglef);
-        camera.invert();
-
-        Matrix4 viewProjection = projection * camera;
-
-        g_lightDirection = Vector4(cosf(counter),1.0f, sinf(counter));
+        g_lightDirection = Vector4(cosf(counter * 0.25f) * 5.0f, sinf(counter) + 2.0f, sinf(counter * 0.25f));
+        g_lightDirection.normalize();
 
         // Mario
         mario.transform.identity();
-        mario.transform.translate(0.0f, -1.5f, 0.0f);
+        mario.transform.translate(5.0f, -1.5f, 0.0f);
         mario.transform.scale(3.0f, 3.0f, 3.0f);
 
         // Turtle
@@ -1309,22 +1308,38 @@ int main() {
         turtle.transform.translate(0.0f, 0.0f, 0.0f);
 
         // Portal
-        portal.transform.identity();
-        portal.transform.rotateY(counter * 15.0f);
-        portal.transform.translate(7.0f, 0.0f, 0.0f);
-        portal.transform.rotateY(counter * 100.0f);
-        portal.transform.rotateX(counter * 80.0f);
-        portal.transform.rotateZ(counter * 60.0f);
+        plane.transform.identity();
+        plane.transform.translate(0.0f, 10.0f, 0.0f);
+        plane.transform.rotateY(counter * 40.0f);
+        plane.transform.translate(15.0f, 0.0f, 0.0f);
+        plane.transform.rotateY(90.0f);
+        plane.transform.rotateX(cosf(counter) * 25.0f);
+        plane.transform.rotateZ(sinf(counter) * 5.0f);
 
         // Box
         box.transform.identity();
         box.transform.translate(0.0f, -2.5f, 0.0f);
         box.transform.scale(100.0f, 1.0f, 100.0f);
 
+        // Camera
+        if(follow_id == 1) follow = position;
+        else if(follow_id == 2) follow = Vector4(plane.transform[3][0], plane.transform[3][1], plane.transform[3][2]);
+
+        Matrix4 camera;
+        camera.translate(follow.x, follow.y, follow.z);
+        camera.translate(-direction.x, -direction.y + 2.0f, -direction.z);
+        camera.rotateY(anglef);
+        camera.invert();
+
+        Matrix4 viewProjection = projection * camera;
+
+        anim.animate(dt);
+        context.drawMesh(anim.frame(), viewProjection, Matrix4(), turtleTex);
+
         // Finally render everything
         turtle.render(context, viewProjection);
         mario.render(context, viewProjection);
-        portal.render(context, viewProjection);
+        plane.render(context, viewProjection);
         box.render(context, viewProjection);
 
         display.draw();
