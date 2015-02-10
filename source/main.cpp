@@ -39,6 +39,57 @@ float lerp(float a, float b, float factor) {
     return a * (1.0f-factor) + b * factor;
 }
 
+class Vector4;
+class Quaternion {
+public:
+    Quaternion(float x, float y, float z, float w) {
+        this->x = x;
+        this->y = y;
+        this->z = z;
+        this->w = w;
+    }
+    Quaternion(float angle, const Vector4& axis);
+
+    float length() const {
+        return (float)sqrt(x*x + y*y + z*z + w*w);
+    }
+    Quaternion normalize() {
+        float len = length();
+        if(len != 0) {
+            x /= len;
+            y /= len;
+            z /= len;
+            w /= len;
+        }
+        return *this;
+    }
+    Quaternion conjugate() const {
+        return Quaternion(-x, -y, -z, w);
+    }
+    Quaternion operator*(const Quaternion& q) const {
+        float ww = w * q.w - x * q.x - y * q.y - z * q.z;
+        float xx = x * q.w + w * q.x + y * q.z - z * q.y;
+        float yy = y * q.w + w * q.y + z * q.x - x * q.z;
+        float zz = z * q.w + w * q.z + x * q.y - y * q.x;
+        return Quaternion(xx, yy, zz, ww);
+    }
+    Quaternion operator*(const Vector4& v) const;
+
+    Quaternion operator+(const Quaternion& q) const {
+        return Quaternion(x + q.x, y + q.y, z + q.z, w + q.w);
+    }
+    Quaternion operator-(const Quaternion& q) const {
+        return Quaternion(x - q.x, y - q.y, z - q.z, w - q.w);
+    }
+    float dot(const Quaternion& q) const {
+        return x * q.x + y * q.y + z * q.z + w * q.w;
+    }
+    float x {0.0f};
+    float y {0.0f};
+    float z {0.0f};
+    float w {0.0f};
+};
+
 class Vector4 {
 public:
     Vector4(float x = 0.0f, float y = 0.0f, float z = 0.0f, float w = 1.0f) {
@@ -85,6 +136,18 @@ public:
         assert(factor != 0);
         return Vector4(x / factor, y / factor, z / factor, w / factor);
     }
+    Vector4 rotate(Quaternion& rotation) {
+        Quaternion w = rotation * (*this) * rotation.conjugate();
+        return Vector4(w.x, w.y, w.z);
+    }
+    Vector4 rotate(Vector4 axis, float angle) {
+        float sinAngle = (float)sinf(-angle);
+        float cosAngle = (float)cosf(-angle);
+
+        return (*this).cross(axis * sinAngle) +           // Rotation on local X
+               (*this) * cosAngle +                       // Rotation on local Z
+               axis * (*this).dot(axis * (1 - cosAngle)); // Rotation on local Y
+    }
     static Vector4 polar(float radius, float inclination, float azimuth) {
         return Vector4(radius * sinf(inclination) * cosf(azimuth), radius * sinf(inclination) * sinf(azimuth), radius * cosf(inclination));
     }
@@ -101,80 +164,25 @@ std::ostream& operator<<(std::ostream& out, const Vector4& rhs) {
     return out;
 }
 
+// Quaternion definitions of forward declared methods
+Quaternion::Quaternion(float angle, const Vector4& axis) {
+    float sinHalfAngle = sinf(angle / 2.0f);
+    float cosHalfAngle = cosf(angle / 2.0f);
+
+    this->x = axis.x * sinHalfAngle;
+    this->y = axis.y * sinHalfAngle;
+    this->z = axis.z * sinHalfAngle;
+    this->w = cosHalfAngle;
+}
+Quaternion Quaternion::operator*(const Vector4& v) const {
+    float ww = -x * v.x - y * v.y - z * v.z;
+    float xx =  w * v.x + y * v.z - z * v.y;
+    float yy =  w * v.y + z * v.x - x * v.z;
+    float zz =  w * v.z + x * v.y - y * v.x;
+    return Quaternion(xx, yy, zz, ww);
+}
+
 Vector4 g_lightDirection;
-
-class Quaternion {
-public:
-    Quaternion(float x, float y, float z, float w) {
-        this->x = x;
-        this->y = y;
-        this->z = z;
-        this->w = w;
-    }
-    float length() const {
-        return (float)sqrt(x*x + y*y + z*z + w*w);
-    }
-    Quaternion normalize() {
-        float len = length();
-        if(len != 0) {
-            x /= len;
-            y /= len;
-            z /= len;
-            w /= len;
-        }
-        return *this;
-    }
-    Quaternion conjugate() const {
-        return Quaternion(-x, -y, -z, w);
-    }
-    Quaternion operator*(const Quaternion& q) const {
-        float ww = w * q.w - x * q.x - y * q.y - z * q.z;
-        float xx = x * q.w + w * q.x + y * q.z - z * q.y;
-        float yy = y * q.w + w * q.y + z * q.x - x * q.z;
-        float zz = z * q.w + w * q.z + x * q.y - y * q.x;
-        return Quaternion(xx, yy, zz, ww);
-    }
-    Quaternion operator*(const Vector4& v) const {
-        float ww = -x * v.x - y * v.y - z * v.z;
-        float xx =  w * v.x + y * v.z - z * v.y;
-        float yy =  w * v.y + z * v.x - x * v.z;
-        float zz =  w * v.z + x * v.y - y * v.x;
-        return Quaternion(xx, yy, zz, ww);
-    }
-    Quaternion operator+(const Quaternion& q) const {
-        return Quaternion(x + q.x, y + q.y, z + q.z, w + q.w);
-    }
-    Quaternion operator-(const Quaternion& q) const {
-        return Quaternion(x - q.x, y - q.y, z - q.z, w - q.w);
-    }
-    float dot(const Quaternion& q) const {
-        return x * q.x + y * q.y + z * q.z + w * q.w;
-    }
-    Quaternion rotate(float angle, Vector4 axis) {
-        float sinHalfAngle = sinf((angle / 2.0f) * PI / 180.0f);
-        float cosHalfAngle = cosf((angle / 2.0f) * PI / 180.0f);
-
-        float xx = axis.x * sinHalfAngle;
-        float yy = axis.y * sinHalfAngle;
-        float zz = axis.z * sinHalfAngle;
-        float ww = cosHalfAngle;
-
-        Quaternion rotation(xx, yy, zz, ww);
-        Quaternion conjugate = rotation.conjugate();
-        Quaternion result = rotation * (*this) * conjugate;
-
-        x = result.x;
-        y = result.y;
-        z = result.z;
-        w = result.w;
-
-        return *this;
-    }
-    float x {0.0f};
-    float y {0.0f};
-    float z {0.0f};
-    float w {0.0f};
-};
 
 class Matrix4 {
 public:
@@ -210,6 +218,37 @@ public:
         matrix[2][2] = (-zNear -zFar)/zRange;
         matrix[3][2] = 2.0f * zFar * zNear / zRange;
         matrix[2][3] = 1.0f;
+    }
+    void lookAt(const Vector4& eye, const Vector4& target, const Vector4& upAxis) {
+        Vector4 forward, right, up;
+        Matrix4 m;
+
+        forward = target - eye;
+        up = upAxis;
+
+        forward.normalize();
+
+        right = up.cross(forward);
+        right.normalize();
+
+        up = forward.cross(right);
+        up.normalize();
+
+        m[0][0] = right.x;
+        m[1][0] = right.y;
+        m[2][0] = right.z;
+
+        m[0][1] = up.x;
+        m[1][1] = up.y;
+        m[2][1] = up.z;
+
+        m[0][2] = forward.x;
+        m[1][2] = forward.y;
+        m[2][2] = forward.z;
+
+        m.translate(-eye.x, -eye.y, -eye.z);
+
+        *this = *this * m;
     }
     Matrix4 operator*(const Matrix4& mat) {
         Matrix4 m;
@@ -416,6 +455,9 @@ public:
             }
         }
         return true;
+    }
+    inline Vector4 translation() const {
+        return Vector4(matrix[3][0], matrix[3][1], matrix[3][2]);
     }
 private:
     float matrix[4][4];
@@ -1200,6 +1242,64 @@ public:
     Matrix4       transform;
 };
 
+class Camera {
+public:
+    Camera() {
+        this->position = Vector4(0.0f, 5.0f, 10.0f, 1.0f);
+        this->direction = Vector4(0.0f, 0.0f, -1.0f, 0.0f);
+    }
+    void update(const float& dt) {
+
+        // Movement
+        if(sf::Keyboard::isKeyPressed(sf::Keyboard::LShift)) turbo = true;
+        else turbo = false;
+        if(sf::Keyboard::isKeyPressed(sf::Keyboard::Up)) speed += turbo ? 4.0f : 1.0f;
+        else if(sf::Keyboard::isKeyPressed(sf::Keyboard::Down)) speed -= turbo ? 4.0f : 1.0f;
+
+        // Orientation
+        if(sf::Keyboard::isKeyPressed(sf::Keyboard::A)) hAngle -= 2.0f * dt;
+        else if(sf::Keyboard::isKeyPressed(sf::Keyboard::D)) hAngle += 2.0f * dt;
+        if(sf::Keyboard::isKeyPressed(sf::Keyboard::S)) vAngle -= 2.0f * dt;
+        else if(sf::Keyboard::isKeyPressed(sf::Keyboard::W)) vAngle += 2.0f * dt;
+
+        hAnglef = lerp(hAnglef, hAngle, dt * 10.0f);
+        vAnglef = lerp(vAnglef, vAngle, dt * 10.0f);
+
+        // Quaternions
+        Quaternion horizontalQuat (hAnglef, Vector4(0.0f, 1.0f, 0.0f));
+        Quaternion verticalQuat   (vAnglef, Vector4(1.0f, 0.0f, 0.0f));
+
+        Quaternion viewQuat = horizontalQuat * verticalQuat;
+
+        direction = Vector4(0.0f, 0.0f, -1.0f, 0.0f);
+        direction = direction.rotate(viewQuat);
+
+        position = position + direction * speed * dt;
+        speed *= friction;
+    }
+
+    Matrix4& matrix() {
+        transform.identity();
+        transform.lookAt(position, position + direction, Vector4(0.0f, 1.0f, 0.0f));
+        return transform;
+    }
+
+private:
+    Vector4 position;
+    Vector4 direction;
+
+    bool  turbo = false;
+    float speed {0.0f};
+    float friction {0.8f};
+
+    float hAngle {0.0f};
+    float vAngle {0.0f};
+    float hAnglef {0.0f};
+    float vAnglef {0.0f};
+
+    Matrix4 transform;
+};
+
 int main() {
 
     srand(time(nullptr));
@@ -1251,40 +1351,14 @@ int main() {
     anim.addFrame(Mesh("assets/animation/turtle7.obj"));
     anim.addFrame(Mesh("assets/animation/turtle8.obj"));
 
-    Vector4 direction;
-    Vector4 position {0.0f, 0.0f, 4.0f};
-    float angle {0.0f};
-    float speed {0.0f};
-    float anglef {0.0f};
-    bool turbo = false;
-
-    Vector4 follow;
-    uint follow_id;
+    Camera camera;
 
     while(display.isOpen()) {
 
         float dt = clock.restart().asSeconds();
         counter += dt;
 
-        // Input
-        if(sf::Keyboard::isKeyPressed(sf::Keyboard::Num1)) follow_id = 1;
-        else if(sf::Keyboard::isKeyPressed(sf::Keyboard::Num2)) follow_id = 2;
-
-        if(sf::Keyboard::isKeyPressed(sf::Keyboard::A)) angle -= 200.0f * dt;
-        else if(sf::Keyboard::isKeyPressed(sf::Keyboard::D)) angle += 200.0f * dt;
-
-        direction = Vector4::polarDegrees(1.0f, angle, 0.0f);
-
-        if(sf::Keyboard::isKeyPressed(sf::Keyboard::LShift)) turbo = true;
-        else turbo = false;
-
-        if(sf::Keyboard::isKeyPressed(sf::Keyboard::W)) speed += turbo ? 4.0f : 1.0f;
-        else if(sf::Keyboard::isKeyPressed(sf::Keyboard::S)) speed -= turbo ? 4.0f : 1.0f;
-
-        position = position + direction * speed * dt;
-        speed *= 0.80f;
-
-        anglef = lerp(anglef, angle, dt * 10.0f);
+        camera.update(dt);
 
         // Clear screen & depth buffer
         context.clear(Color::Grey());
@@ -1298,14 +1372,14 @@ int main() {
 
         // Mario
         mario.transform.identity();
+        mario.transform.lookAt(mario.transform.translation(), turtle.transform.translation() - mario.transform.translation(), Vector4(0.0f, 1.0f, 0.0f));
+        mario.transform.invert();
         mario.transform.translate(5.0f, -1.5f, 0.0f);
         mario.transform.scale(3.0f, 3.0f, 3.0f);
 
         // Turtle
         turtle.transform.identity();
-        turtle.transform.translate(position.x, position.y, position.z);
-        turtle.transform.rotateY(angle);
-        turtle.transform.translate(0.0f, 0.0f, 0.0f);
+        turtle.transform.translate(cosf(counter) * 25.0f, 0.0f, sinf(counter) * 25.0f);
 
         // Portal
         plane.transform.identity();
@@ -1321,17 +1395,8 @@ int main() {
         box.transform.translate(0.0f, -2.5f, 0.0f);
         box.transform.scale(100.0f, 1.0f, 100.0f);
 
-        // Camera
-        if(follow_id == 1) follow = position;
-        else if(follow_id == 2) follow = Vector4(plane.transform[3][0], plane.transform[3][1], plane.transform[3][2]);
 
-        Matrix4 camera;
-        camera.translate(follow.x, follow.y, follow.z);
-        camera.translate(-direction.x, -direction.y + 2.0f, -direction.z);
-        camera.rotateY(anglef);
-        camera.invert();
-
-        Matrix4 viewProjection = projection * camera;
+        Matrix4 viewProjection = projection * camera.matrix();
 
         anim.animate(dt);
         context.drawMesh(anim.frame(), viewProjection, Matrix4(), turtleTex);
